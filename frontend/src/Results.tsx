@@ -22,6 +22,7 @@ import {
   money,
   shortDate,
   indicators,
+  objectives,
   api,
   type Explanation,
   errorText,
@@ -82,7 +83,10 @@ export function Events({ r }: { r: Result }) {
             <Layers3 size={17} />
             <h3>Event explorer</h3>
           </div>
-          <p>Inspect the signal, execution prices, and outcome of each observation.</p>
+          <p>
+            Objective: {objectives[r.config.objective]}. Counterexamples are qualifying signals that
+            missed this objective.
+          </p>
         </div>
         <label className="sort">
           <ListFilter size={14} />
@@ -95,6 +99,7 @@ export function Events({ r }: { r: Result }) {
             }}
           >
             <option value="recent">Most recent</option>
+            <option value="effect">Furthest below objective</option>
             <option value="worst">Worst return</option>
             <option value="best">Best return</option>
           </select>
@@ -102,25 +107,26 @@ export function Events({ r }: { r: Result }) {
       </div>
       <div className="filter-row">
         <div className="seg">
-          <button
-            className={mode === 'all' ? 'on' : ''}
-            onClick={() => {
-              setMode('all')
-              setPage(0)
-            }}
-          >
-            All events <em>{r.metrics.count}</em>
-          </button>
-          <button
-            className={mode === 'fail' ? 'on' : ''}
-            onClick={() => {
-              setMode('fail')
-              setPage(0)
-              setSort('worst')
-            }}
-          >
-            Counterexamples <em>{r.metrics.failures}</em>
-          </button>
+          {(
+            [
+              ['all', 'All events', r.events.length],
+              ['pass', 'Met objective', r.events.length - r.metrics.failures],
+              ['fail', 'Counterexamples', r.metrics.failures],
+            ] as const
+          ).map(([key, label, count]) => (
+            <button
+              key={key}
+              className={mode === key ? 'on' : ''}
+              aria-pressed={mode === key}
+              onClick={() => {
+                setMode(key)
+                setPage(0)
+                if (key === 'fail') setSort('effect')
+              }}
+            >
+              {label} <em>{count}</em>
+            </button>
+          ))}
         </div>
       </div>
       {list.length ? (

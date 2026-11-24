@@ -2,11 +2,12 @@ import json
 import logging
 import threading
 import uuid
+from datetime import date
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -14,7 +15,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from . import ENGINE_VERSION, ai
 from .engine import analyze
 from .exports import bundle, event_csv, import_bundle, report
-from .market import load_market, read_csv, search_symbols, store_frame
+from .market import MarketError, load_market, read_csv, search_symbols, store_frame
 from .robustness import evaluate_robustness
 from .schema import (
     Comparison,
@@ -28,8 +29,14 @@ from .schema import (
     Settings,
 )
 from .store import Store
+from .terminal_api import register
+from fastapi.exceptions import RequestValidationError
 
 log = logging.getLogger("stockreplay")
+
+
+def opening_config():
+    return Experiment()
 
 
 def create_app(root=None):
@@ -37,11 +44,16 @@ def create_app(root=None):
     db = Store(root)
     app.state.store = db
     app.add_middleware(
-        TrustedHostMiddleware, allowed_hosts=["localhost", "127.0.0.1", "[::1]", "testserver"]
+        TrustedHostMiddleware,
+        allowed_hosts=["localhost", "127.0.0.1", "[::1]", "testserver"],
     )
-    jobs, demo, lock = {}, {}, threading.Lock()
+    jobs, lock = {}, threading.Lock()
+    opening_lock = threading.Lock()
     pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="stockreplay")
     with db.connect() as conn:
+        conn.execute(
+            "create table if not exists opening_runs(signature text primary key,run_id text references runs(id))"
+        )
         conn.execute(
             "create table if not exists research(run_id text primary key references runs(id), robustness text, explanation text)"
         )
@@ -50,7 +62,11 @@ def create_app(root=None):
     async def local_requests(request: Request, call_next):
         if request.method not in {"GET", "HEAD", "OPTIONS"}:
             origin = request.headers.get("origin")
-            if origin and urlsplit(origin).hostname not in {"localhost", "127.0.0.1", "::1"}:
+            if origin and urlsplit(origin).hostname not in {
+                "localhost",
+                "127.0.0.1",
+                "::1",
+            }:
                 return JSONResponse(
                     {"detail": "Only the local application can change research data."},
                     status_code=403,
@@ -68,6 +84,12 @@ def create_app(root=None):
     @app.exception_handler(ai.AIUnavailable)
     async def offline(request, exc):
         return JSONResponse({"detail": str(exc)}, status_code=503)
+
+    @app.exception_handler(RequestValidationError)
+    async def invalid(request, exc):
+        # Validation errors must never reflect keys or statement contents.
+        errors = [{"loc": e["loc"], "msg": e["msg"], "type": e["type"]} for e in exc.errors()]
+        return JSONResponse({"detail": errors}, status_code=422)
 
     def output(key):
         value = db.result(key)
@@ -103,13 +125,47 @@ def create_app(root=None):
     def validate(config: Experiment):
         return config
 
-    @app.get("/api/demo")
-    def demonstration():
-        with lock:
-            key = demo.get("key")
-            if not key:
-                key = demo["key"] = calculate(Experiment(source="demo"))
-        return output(key)
+    @app.get("/api/opening")
+    def opening_run(config: Experiment = Depends(opening_config)):
+        with opening_lock:
+            signature = ENGINE_VERSION + config.model_dump_json()
+            with db.connect() as conn:
+                saved = conn.execute(
+                    "select run_id from opening_runs where signature=?", (signature,)
+                ).fetchone()
+            if saved:
+                return output(saved[0])
+            try:
+                key = calculate(config)
+            except MarketError as exc:
+                if config.source != "yahoo":
+                    raise
+                # An outage can still leave a fully covered, genuine historical run on disk.
+                ends = [
+                    {
+                        s["last"]
+                        for s in db.catalog()
+                        if s["source"] == "yahoo"
+                        and s["ticker"] == ticker
+                        and s["first"] <= config.start.isoformat()
+                        and s["last"] < config.end.isoformat()
+                    }
+                    for ticker in config.symbols()
+                ]
+                if not all(ends):
+                    raise
+                end = min(max(s) for s in ends)
+                if end <= config.start.isoformat():
+                    raise
+                cached = config.model_copy(update={"end": date.fromisoformat(end)})
+                key = calculate(cached)
+                return {
+                    **output(key),
+                    "opening_notice": f"Requested through {config.end}. Showing available Yahoo history through {end}. {exc}",
+                }
+            with db.connect() as conn:
+                conn.execute("insert or replace into opening_runs values(?,?)", (signature, key))
+            return output(key)
 
     @app.get("/api/ai")
     def ai_status():
@@ -181,11 +237,16 @@ def create_app(root=None):
                 """insert into research(run_id,explanation) values(?,?)
                    on conflict(run_id) do update set explanation=excluded.explanation
                    where research.robustness is ?""",
-                (key, json.dumps(answer), json.dumps(previous) if previous is not None else None),
+                (
+                    key,
+                    json.dumps(answer),
+                    json.dumps(previous) if previous is not None else None,
+                ),
             )
             if not updated.rowcount:
                 raise HTTPException(
-                    409, "Robustness results changed during generation. Regenerate the explanation."
+                    409,
+                    "Robustness results changed during generation. Regenerate the explanation.",
                 )
         return answer
 
@@ -274,7 +335,10 @@ def create_app(root=None):
         result = output(key)
         notes = ""
         if saved:
-            match = next((x for x in db.library() if x["id"] == saved and x["run_id"] == key), None)
+            match = next(
+                (x for x in db.library() if x["id"] == saved and x["run_id"] == key),
+                None,
+            )
             if match:
                 notes = match["notes"]
                 result["config"] = {**result["config"], "name": match["name"]}
@@ -283,16 +347,21 @@ def create_app(root=None):
             return download(event_csv(result), "text/csv", prefix + "-events.csv")
         if kind == "config":
             return download(
-                json.dumps(result["config"], indent=2), "application/json", prefix + "-config.json"
+                json.dumps(result["config"], indent=2),
+                "application/json",
+                prefix + "-config.json",
             )
         if kind == "bundle":
             return download(
-                json.dumps(bundle(db, result)), "application/json", prefix + ".stockreplay.json"
+                json.dumps(bundle(db, result)),
+                "application/json",
+                prefix + ".stockreplay.json",
             )
         if kind == "html":
             return download(report(result, notes), "text/html", prefix + ".html")
         raise KeyError("Unknown export format.")
 
+    register(app, db)
     dist = Path(__file__).resolve().parents[1] / "frontend" / "dist"
     if dist.is_dir():
         app.mount("/", StaticFiles(directory=dist, html=True), name="terminal")

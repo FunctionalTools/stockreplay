@@ -5,7 +5,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from stockreplay import ai, market
-from stockreplay.api import create_app
+from stockreplay.api import create_app, opening_config
+from tests.fixture_market import seed
 from stockreplay.robustness import evaluate_robustness
 from stockreplay.schema import Experiment, RobustnessRequest
 
@@ -63,7 +64,8 @@ def test_full_api_persistence_export_replay(client, config, frames):
     )
     assert (
         client.post(
-            "/api/comparisons", json={"name": "Reproduction", "left": key, "right": restored["id"]}
+            "/api/comparisons",
+            json={"name": "Reproduction", "left": key, "right": restored["id"]},
         ).status_code
         == 201
     )
@@ -72,10 +74,16 @@ def test_full_api_persistence_export_replay(client, config, frames):
     assert client.get("/api/runs/invalid").status_code == 404
 
 
-def test_demo_jobs_and_offline_ai(client, monkeypatch):
-    r = client.get("/api/demo").json()
-    assert r["config"]["source"] == "demo" and r["metrics"]["count"] > 0
-    assert client.get("/api/demo").json()["id"] == r["id"]
+def set_test_opening(client):
+    config = seed(client.app.state.store)
+    client.app.dependency_overrides[opening_config] = lambda: config
+
+
+def test_opening_jobs_and_offline_ai(client, monkeypatch):
+    set_test_opening(client)
+    r = client.get("/api/opening").json()
+    assert r["config"]["source"] == "csv" and r["metrics"]["count"] > 0
+    assert client.get("/api/opening").json()["id"] == r["id"]
 
     def down(*args):
         raise ai.AIUnavailable("offline")
@@ -83,7 +91,8 @@ def test_demo_jobs_and_offline_ai(client, monkeypatch):
     monkeypatch.setattr(ai, "chat", down)
     assert (
         client.post(
-            "/api/interpret", json={"config": r["config"], "question": "Test this question"}
+            "/api/interpret",
+            json={"config": r["config"], "question": "Test this question"},
         ).status_code
         == 503
     )
@@ -95,7 +104,8 @@ def test_error_paths_and_settings(client, config, monkeypatch):
     assert client.post("/api/jobs", json={"config": {"holding": 0}}).status_code == 422
     assert (
         client.post(
-            "/api/data/import", json={"ticker": "AAPL", "csv": "Date,Open\n2020-01-01,1"}
+            "/api/data/import",
+            json={"ticker": "AAPL", "csv": "Date,Open\n2020-01-01,1"},
         ).status_code
         == 422
     )
@@ -106,7 +116,9 @@ def test_error_paths_and_settings(client, config, monkeypatch):
     assert client.get("/api/symbols?q=NVIDIA").json()[0]["symbol"] == "NVDA"
     assert client.get("/api/jobs/absent").status_code == 404
     monkeypatch.setattr(
-        ai, "status", lambda m: {"model": m, "online": False, "ready": False, "models": []}
+        ai,
+        "status",
+        lambda m: {"model": m, "online": False, "ready": False, "models": []},
     )
     assert client.put("/api/settings", json={"model": "local:v1"}).json()["model"] == "local:v1"
     assert client.get("/api/ai").json()["model"] == "local:v1"
@@ -117,7 +129,8 @@ def test_error_paths_and_settings(client, config, monkeypatch):
 
 
 def test_robustness_chronology(client):
-    r = client.get("/api/demo").json()
+    set_test_opening(client)
+    r = client.get("/api/opening").json()
     payload = {
         "config": r["config"],
         "thresholds": [-2, -3],
@@ -139,8 +152,9 @@ def test_robustness_chronology(client):
 def test_holdout_does_not_influence_training(tmp_path):
     from stockreplay.store import Store
 
-    c = Experiment(source="demo")
-    frames, _ = market.load_market(Store(tmp_path), c)
+    db = Store(tmp_path)
+    c = seed(db)
+    frames, _ = market.load_market(db, c)
     req = RobustnessRequest(config=c, holdings=[4, 5], thresholds=[-2, -3], split=0.65, folds=2)
     before = evaluate_robustness(req, frames)
     first = int(len(frames["NVDA"]) * req.split)
@@ -153,7 +167,8 @@ def test_holdout_does_not_influence_training(tmp_path):
 
 
 @pytest.mark.skipif(
-    os.getenv("STOCKREPLAY_LIVE_TESTS") != "1", reason="enable live Yahoo request explicitly"
+    os.getenv("STOCKREPLAY_LIVE_TESTS") != "1",
+    reason="enable live Yahoo request explicitly",
 )
 def test_real_yahoo_and_cached_replay(client, monkeypatch):
     c = Experiment(source="yahoo", start="2023-01-03", end="2024-12-31")
@@ -169,13 +184,15 @@ def test_real_yahoo_and_cached_replay(client, monkeypatch):
 
 
 def test_changed_robustness_invalidates_inflight_explanation(client, monkeypatch):
-    r = client.get("/api/demo").json()
+    set_test_opening(client)
+    r = client.get("/api/opening").json()
     db = client.app.state.store
 
     def changed(*args):
         with db.connect() as conn:
             conn.execute(
-                "insert into research(run_id,robustness) values(?,?)", (r["id"], '{"cells":[]}')
+                "insert into research(run_id,robustness) values(?,?)",
+                (r["id"], '{"cells":[]}'),
             )
         return {"origin": "ollama", "model": "local", "sections": []}
 

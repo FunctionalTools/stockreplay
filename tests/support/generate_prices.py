@@ -9,7 +9,7 @@ from stockreplay.market import sessions
 
 
 def generate():
-    root = Path(__file__).resolve().parents[1] / "data" / "demo"
+    root = Path(__file__).resolve().parents[1] / "fixtures" / "prices"
     root.mkdir(parents=True, exist_ok=True)
     days = sessions("2021-01-04", "2024-12-31")
     rng = np.random.default_rng(134)

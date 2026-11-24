@@ -18,7 +18,11 @@ async function screen(page: Page, name: string) {
   }
 }
 async function save(page: Page, name: string) {
-  await page.getByRole('button', { name: /^(Save experiment|Update saved experiment)$/ }).click()
+  await page
+    .getByRole('button', {
+      name: /^(Save experiment|Update saved experiment)$/,
+    })
+    .click()
   await page.getByLabel('Experiment name', { exact: true }).fill(name)
   await page.getByLabel('Research notes').fill('Documented browser verification.')
   const copy = page.getByRole('button', { name: 'Save as new' })
@@ -40,12 +44,14 @@ async function download(page: Page, act: () => Promise<unknown>) {
   return { name: f.suggestedFilename(), data: await readFile(file!) }
 }
 
-test('synthetic history, all chart views, counterexamples and chart export', async ({ page }) => {
+test('opening history, all chart views, counterexamples and chart export', async ({ page }) => {
   const errors: string[] = []
   page.on('pageerror', (e) => errors.push(e.message))
   await ready(page)
   await screen(page, 'workbench')
-  await expect(page.getByLabel('Experiment data source')).toHaveValue('demo')
+  await expect(page.getByLabel('Experiment data source')).toHaveValue(
+    process.env.STOCKREPLAY_LIVE_TESTS === '1' ? 'yahoo' : 'csv',
+  )
   await page.getByRole('button', { name: '1Y', exact: true }).click()
   await page.getByRole('button', { name: 'Signals off' }).click()
   expect(
@@ -70,11 +76,24 @@ test('synthetic history, all chart views, counterexamples and chart export', asy
   await expect(page.getByRole('heading', { name: 'Signal conditions at close' })).toBeVisible()
   await screen(page, 'counterexample')
   await page.keyboard.press('Escape')
+  const rows = page.locator('.events tbody tr')
+  for (const row of await rows.all()) await expect(row).toContainText('Counterexample')
+  await page.getByRole('button', { name: /Met objective \d+/ }).click()
+  for (const row of await rows.all()) await expect(row).toContainText('Met objective')
+  await page.getByRole('button', { name: /All events \d+/ }).click()
+  await expect(page.getByRole('button', { name: /All events \d+/ })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  )
   expect(errors).toEqual([])
 })
 
 test('builder portfolio, persistence, comparison and portable exports', async ({ page }) => {
-  await page.route('**/api/ai', route => route.fulfill({json:{model:'offline',online:false,ready:false,models:[]}}))
+  await page.route('**/api/ai', (route) =>
+    route.fulfill({
+      json: { model: 'offline', online: false, ready: false, models: [] },
+    }),
+  )
   await ready(page)
   await save(page, 'Baseline events')
   await page.getByRole('button', { name: 'Builder', exact: true }).click()
@@ -92,7 +111,12 @@ test('builder portfolio, persistence, comparison and portable exports', async ({
   await expect(page.getByRole('table')).toContainText('Portfolio return')
   await nav(page, 'Research library')
   await page.getByRole('button', { name: 'Duplicate Allocated portfolio' }).click()
-  await page.getByRole('button', { name: 'Edit Allocated portfolio (copy)', exact: true }).click()
+  await page
+    .getByRole('button', {
+      name: 'Edit Allocated portfolio (copy)',
+      exact: true,
+    })
+    .click()
   await page.getByLabel('Experiment name').fill('Reviewed copy')
   await page.getByRole('button', { name: 'Save research' }).click()
   await page.getByRole('button', { name: 'Delete Reviewed copy', exact: true }).click()
@@ -122,9 +146,11 @@ test('CSV import, cache export, AI failure and model settings', async ({ page })
   await nav(page, 'Market data')
   await page.getByLabel('CSV ticker').fill('LAB')
   const csv = 'Date,Open,High,Low,Close,Adj Close,Volume\n2023-01-03,10,13,9,11,11,200\n'
-  await page
-    .getByLabel('Daily price file')
-    .setInputFiles({ name: 'lab.csv', mimeType: 'text/csv', buffer: Buffer.from(csv) })
+  await page.getByLabel('Daily price file').setInputFiles({
+    name: 'lab.csv',
+    mimeType: 'text/csv',
+    buffer: Buffer.from(csv),
+  })
   await page.getByRole('button', { name: 'Import CSV', exact: true }).click()
   await expect(page.getByText('CSV validated and cached.')).toBeVisible()
   await page.getByLabel('Filter data source').selectOption('csv')

@@ -20,7 +20,7 @@ def encode(value):
 class Store:
     def __init__(self, root=None):
         parent = Path(root or os.environ.get("STOCKREPLAY_HOME", ".stockreplay"))
-        parent.mkdir(parents=True, exist_ok=True)
+        parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         self.path = parent / "lab.sqlite3"
         with self.connect() as db:
             db.execute("pragma journal_mode=WAL")
@@ -35,6 +35,16 @@ class Store:
                 create table if not exists settings(id integer primary key check(id=1), model text);
                 create table if not exists comparisons(id text primary key, name text, created text, payload text);
             """)
+
+        for filename in (
+            self.path,
+            Path(str(self.path) + "-wal"),
+            Path(str(self.path) + "-shm"),
+        ):
+            try:
+                filename.chmod(0o600)
+            except FileNotFoundError:
+                pass
 
     @contextmanager
     def connect(self):
@@ -112,7 +122,8 @@ class Store:
         key, stamp = uuid.uuid4().hex, now()
         with self.connect() as db:
             db.execute(
-                "insert into library values(?,?,?,?,?,?)", (key, run_id, name, notes, stamp, stamp)
+                "insert into library values(?,?,?,?,?,?)",
+                (key, run_id, name, notes, stamp, stamp),
             )
         return key
 
@@ -150,7 +161,10 @@ class Store:
     def add_comparison(self, name, data):
         key = uuid.uuid4().hex
         with self.connect() as db:
-            db.execute("insert into comparisons values(?,?,?,?)", (key, name, now(), encode(data)))
+            db.execute(
+                "insert into comparisons values(?,?,?,?)",
+                (key, name, now(), encode(data)),
+            )
         return key
 
     def comparisons(self):

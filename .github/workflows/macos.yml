@@ -26,6 +26,13 @@ jobs:
           .venv/bin/python -m pytest -q
           npm --prefix frontend test
           npm --prefix frontend run e2e
+      - name: Exercise market and portfolio flows in WebKit
+        working-directory: frontend
+        env:
+          STOCKREPLAY_BROWSER: webkit
+        run: |
+          ./node_modules/.bin/playwright install webkit
+          npm run e2e -- terminal.spec.ts
       - name: Verify local service lifecycle
         run: |
           ./start.sh

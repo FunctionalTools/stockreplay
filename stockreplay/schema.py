@@ -3,6 +3,8 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from .trading_calendar import history_start, latest_session
+
 Symbol = Annotated[str, Field(min_length=1, max_length=12, pattern=r"^[A-Z^][A-Z0-9.^=-]*$")]
 Indicator = Literal[
     "daily_return",
@@ -65,8 +67,8 @@ class Experiment(Model):
     kind: Literal["event", "portfolio"] = "event"
     tickers: list[Symbol] = Field(default_factory=lambda: ["NVDA"], min_length=1, max_length=8)
     benchmark: Symbol = "SPY"
-    start: date = date(2021, 1, 4)
-    end: date = date(2024, 12, 31)
+    start: date = Field(default_factory=history_start)
+    end: date = Field(default_factory=latest_session)
     source: Source = "yahoo"
     entry: Group = Field(default_factory=lambda: Group(rules=[Condition()]))
     exit: Group | None = None

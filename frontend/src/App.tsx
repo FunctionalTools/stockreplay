@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   Activity,
+  Newspaper,
+  ChartCandlestick,
+  Star,
+  BriefcaseBusiness,
+  ListFilter,
+  PanelsTopLeft,
+  Award,
   ArrowRight,
   BookMarked,
   Bookmark,
@@ -37,6 +44,21 @@ import {
 } from './types'
 import { Busy, Empty, ErrorBox } from './ui'
 
+import { MarketResearch, RatingsPage } from './ResearchDesk'
+import { ChartDesk } from './ChartDesk'
+import { Watchlists, Screener } from './Watch'
+import { HoldingsPage } from './Positions'
+import { TradingTools } from './TradingTools'
+
+const markets = [
+  { name: 'Market research', icon: Newspaper },
+  { name: 'Charts', icon: ChartCandlestick },
+  { name: 'Investor ratings', icon: Award },
+  { name: 'Market screener', icon: ListFilter },
+  { name: 'Watchlists', icon: Star },
+  { name: 'Holdings', icon: BriefcaseBusiness },
+  { name: 'TradingView tools', icon: PanelsTopLeft },
+]
 const nav = [
   { name: 'Workbench', icon: Activity },
   { name: 'Research library', icon: BookMarked },
@@ -50,6 +72,7 @@ const offline: AIStatus = { online: false, ready: false, model: '', models: [] }
 export default function App() {
   const [page, setPage] = useState('Workbench'),
     [mobile, setMobileOpen] = useState(false),
+    [symbol, selectSymbol] = useState('NVDA'),
     [ai, setAI] = useState<AIStatus>(offline),
     [defaults, setDefaults] = useState<Config | null>(null),
     [draft, setDraft] = useState<Config | null>(null),
@@ -67,11 +90,14 @@ export default function App() {
     [save, saveOpen] = useState(false),
     [exp, exportOpen] = useState(false),
     [loading, setLoading] = useState(true)
+  const openingRevision = useRef(0)
+  const [openingMessage, setOpeningMessage] = useState('')
   const prompt = useRef<HTMLTextAreaElement>(null)
   const refresh = useCallback(async () => {
     setItems(await api<LibraryItem[]>('/library'))
   }, [])
-  function navigate(v: string) {
+  function navigate(v: string, ticker?: string) {
+    if (ticker) selectSymbol(ticker)
     setPage(v)
     setMobileOpen(false)
     setError('')
@@ -89,16 +115,30 @@ export default function App() {
     setLoading(true)
     setError('')
     try {
-      const [d, r, a, library] = await Promise.all([
-        api<Config>('/defaults'),
-        api<Result>('/demo'),
-        api<AIStatus>('/ai'),
-        api<LibraryItem[]>('/library'),
-      ])
+      const revision = ++openingRevision.current
+      const d = await api<Config>('/defaults')
+      if (openingRevision.current !== revision) return
       setDefaults(d)
-      install(r)
-      setAI(a)
-      setItems(library)
+      setDraft(d)
+      setQuestion(d.hypothesis)
+      setOpeningMessage('Loading market history through ' + d.end)
+      void api<Result>('/opening')
+        .then((r) => {
+          if (openingRevision.current === revision) {
+            install(r)
+            setNotice(r.opening_notice || '')
+            setOpeningMessage('')
+          }
+        })
+        .catch((e) => {
+          if (openingRevision.current === revision) setOpeningMessage(errorText(e))
+        })
+      void api<AIStatus>('/ai')
+        .then(setAI)
+        .catch(() => setAI(offline))
+      void api<LibraryItem[]>('/library')
+        .then(setItems)
+        .catch((e) => setError(errorText(e)))
     } catch (e) {
       setError(errorText(e))
     } finally {
@@ -107,6 +147,9 @@ export default function App() {
   }, [])
   useEffect(() => {
     void load()
+    return () => {
+      ++openingRevision.current
+    }
   }, [load])
   useEffect(() => {
     document.title = page + ' · StockReplay'
@@ -124,7 +167,12 @@ export default function App() {
     window.addEventListener('keydown', key)
     return () => window.removeEventListener('keydown', key)
   }, [])
+  function editWorkbench() {
+    ++openingRevision.current
+    setOpeningMessage('')
+  }
   async function execute(c: Config) {
+    editWorkbench()
     const pins = result ? validPinSet(c, result) : undefined
     setBuilder(null)
     setDraft(c)
@@ -133,9 +181,16 @@ export default function App() {
     setError('')
     setNotice('')
     try {
-      const { job } = await api<{ job: string }>('/jobs', 'POST', { config: c, pins })
+      const { job } = await api<{ job: string }>('/jobs', 'POST', {
+        config: c,
+        pins,
+      })
       for (;;) {
-        const state = await api<{ status: string; message: string; run?: string }>('/jobs/' + job)
+        const state = await api<{
+          status: string
+          message: string
+          run?: string
+        }>('/jobs/' + job)
         if (state.status === 'error') throw Error(state.message)
         if (state.run) {
           const r = await api<Result>('/runs/' + state.run)
@@ -170,11 +225,11 @@ export default function App() {
     setError('')
     setNotice('')
     try {
-      const v = await api<{ status: string; config: Config | null; message: string }>(
-        '/interpret',
-        'POST',
-        { question, config: draft },
-      )
+      const v = await api<{
+        status: string
+        config: Config | null
+        message: string
+      }>('/interpret', 'POST', { question, config: draft })
       if (v.config) {
         setReview(v.message)
         setBuilder(v.config)
@@ -193,6 +248,7 @@ export default function App() {
   }
   function create() {
     if (!defaults) return
+    editWorkbench()
     navigate('Workbench')
     const v = { ...structuredClone(defaults), name: 'Untitled experiment' }
     setDraft(v)
@@ -206,6 +262,7 @@ export default function App() {
     try {
       const r = await api<Result>('/runs/' + i.run_id)
       navigate('Workbench')
+      editWorkbench()
       install(r, i.id)
       setDraft({ ...r.config, name: i.name })
     } catch (e) {
@@ -255,6 +312,8 @@ export default function App() {
           </button>
         </div>
         <nav aria-label="Main navigation">
+          <div className="nav-section">Markets</div>
+          {markets.map(navButton)}
           <div className="nav-section">Workspace</div>
           {nav.slice(0, 3).map(navButton)}
           <div className="nav-section">Laboratory</div>
@@ -268,7 +327,7 @@ export default function App() {
             </div>
             <div>
               <b>Local engine</b>
-              <small>StockReplay v{result?.engine || '1.0.0'}</small>
+              <small>macOS workspace</small>
             </div>
             <i className="dot" />
           </div>
@@ -345,7 +404,10 @@ export default function App() {
                         placeholder="What market behavior would you like to test?"
                         value={question}
                         maxLength={2000}
-                        onChange={(e) => setQuestion(e.target.value)}
+                        onChange={(e) => {
+                          editWorkbench()
+                          setQuestion(e.target.value)
+                        }}
                         onKeyDown={(e) => {
                           if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && !working) {
                             e.preventDefault()
@@ -353,7 +415,7 @@ export default function App() {
                           }
                         }}
                       />
-                      <kbd title="Focus hypothesis">⌘ / Ctrl K</kbd>
+                      <kbd title="Focus hypothesis">⌘ K</kbd>
                     </div>
                     <div className="hyp-actions">
                       <div className="inline wrap">
@@ -362,21 +424,28 @@ export default function App() {
                           <select
                             aria-label="Experiment data source"
                             value={draft.source}
-                            onChange={(e) =>
-                              setDraft({ ...draft, source: e.target.value as Source })
-                            }
+                            onChange={(e) => {
+                              editWorkbench()
+                              setDraft({
+                                ...draft,
+                                source: e.target.value as Source,
+                              })
+                            }}
                           >
-                            {Object.entries(sourceName).map(([k, v]) => (
-                              <option key={k} value={k}>
-                                {v}
-                              </option>
-                            ))}
+                            {Object.entries(sourceName)
+                              .filter(([s]) => s !== 'demo' || draft.source === s)
+                              .map(([k, v]) => (
+                                <option key={k} value={k}>
+                                  {v}
+                                </option>
+                              ))}
                           </select>
                         </label>
                         <button
                           className="text-btn"
                           disabled={!!working}
                           onClick={() => {
+                            editWorkbench()
                             setReview('')
                             setBuilder({
                               ...draft,
@@ -459,13 +528,30 @@ export default function App() {
                   ) : (
                     <section className="panel">
                       <Empty
-                        title="Ready for your first run"
-                        body="Enter a question for Ollama, or define the entry and exit conditions in the builder."
+                        title={openingMessage || 'Ready for your first run'}
+                        body={
+                          'Daily study through ' +
+                          draft.end +
+                          '. Run the configured experiment or edit its rules in the builder.'
+                        }
                       />
                     </section>
                   )}
                 </>
               )}
+              {page === 'Market research' && (
+                <MarketResearch key={symbol} symbol={symbol} select={selectSymbol} go={navigate} />
+              )}
+              {page === 'Investor ratings' && (
+                <RatingsPage key={symbol} symbol={symbol} select={selectSymbol} go={navigate} />
+              )}
+              {page === 'Charts' && (
+                <ChartDesk key={symbol} symbol={symbol} select={selectSymbol} go={navigate} />
+              )}
+              {page === 'Market screener' && <Screener go={navigate} />}
+              {page === 'Watchlists' && <Watchlists go={navigate} symbol={symbol} />}
+              {page === 'Holdings' && <HoldingsPage />}
+              {page === 'TradingView tools' && <TradingTools symbol={symbol} />}
               {page === 'Research library' && (
                 <Library
                   items={items}
@@ -473,11 +559,13 @@ export default function App() {
                   open={open}
                   create={create}
                   imported={(r) => {
+                    editWorkbench()
                     navigate('Workbench')
                     install(r)
                     setNotice('Experiment reproduced from embedded snapshots.')
                   }}
                   configure={(c) => {
+                    editWorkbench()
                     navigate('Workbench')
                     setDraft(c)
                     setQuestion(c.hypothesis)
@@ -494,7 +582,13 @@ export default function App() {
                   <Robustness
                     key={result.id}
                     r={result}
-                    done={(v) => setResult({ ...result, robustness: v, explanation: undefined })}
+                    done={(v) =>
+                      setResult({
+                        ...result,
+                        robustness: v,
+                        explanation: undefined,
+                      })
+                    }
                   />
                 ) : (
                   <Empty

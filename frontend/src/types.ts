@@ -24,7 +24,12 @@ export type Config = {
   cost_bps: number
   slippage_bps: number
   regime: string
-  stats: { confidence: number; samples: number; block_sessions: number; seed: number }
+  stats: {
+    confidence: number
+    samples: number
+    block_sessions: number
+    seed: number
+  }
 }
 export type Snapshot = {
   id: string
@@ -52,7 +57,13 @@ export type Observation = {
   regime: string
   readings: (number | null)[]
 }
-export type Candle = { time: string; open: number; high: number; low: number; close: number }
+export type Candle = {
+  time: string
+  open: number
+  high: number
+  low: number
+  close: number
+}
 export type Metrics = {
   count: number
   mean: number | null
@@ -79,7 +90,12 @@ export type Measure = {
   win_rate: number | null
   total_return: number | null
 }
-export type Cell = { threshold: number; holding: number; train: Measure; test: Measure }
+export type Cell = {
+  threshold: number
+  holding: number
+  train: Measure
+  test: Measure
+}
 export type Robust = {
   train_end: string
   test_start: string
@@ -109,6 +125,7 @@ export type Explanation = {
   sections: { key: string; text: string }[]
 }
 export type Result = {
+  opening_notice?: string
   id: string
   config: Config
   engine: string
@@ -141,9 +158,14 @@ export type LibraryItem = {
   created: string
   updated: string
 }
-export type AIStatus = { online: boolean; ready: boolean; model: string; models: string[] }
+export type AIStatus = {
+  online: boolean
+  ready: boolean
+  model: string
+  models: string[]
+}
 export const sourceName: Record<Source, string> = {
-  demo: 'Synthetic demo',
+  demo: 'Archived synthetic data',
   yahoo: 'Yahoo Finance',
   csv: 'Imported CSV',
 }
@@ -182,7 +204,10 @@ export const pct = (n: number | null | undefined, sign = true, digits = 2) =>
 export const tone = (n: number | null | undefined) =>
   n == null || n === 0 ? '' : n > 0 ? 'positive' : 'negative'
 export const money = (n: number) =>
-  n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  n.toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })
 export const pinsOf = (r: Result) =>
   Object.fromEntries(Object.entries(r.sources).map(([t, s]) => [t, s.id]))
 export const shortDate = (v: string) =>
@@ -198,9 +223,9 @@ export async function api<T>(path: string, method = 'GET', body?: unknown): Prom
     headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
   })
-  const value = await response
-    .json()
-    .catch(() => ({ detail: 'The local service returned an unreadable response.' }))
+  const value = await response.json().catch(() => ({
+    detail: 'The local service returned an unreadable response.',
+  }))
   if (!response.ok)
     throw Error(
       Array.isArray(value.detail)
@@ -213,13 +238,15 @@ export async function api<T>(path: string, method = 'GET', body?: unknown): Prom
 }
 export const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e))
 export function filterEvents(events: Observation[], mode: string, sort: string) {
-  const view = events.filter((e) => mode !== 'fail' || !e.success)
+  const view = events.filter((e) => mode === 'all' || (mode === 'pass' ? e.success : !e.success))
   return view.sort((a, b) =>
-    sort === 'worst'
-      ? a.return_pct - b.return_pct
-      : sort === 'best'
-        ? b.return_pct - a.return_pct
-        : b.signal.localeCompare(a.signal),
+    sort === 'effect'
+      ? a.effect - b.effect
+      : sort === 'worst'
+        ? a.return_pct - b.return_pct
+        : sort === 'best'
+          ? b.return_pct - a.return_pct
+          : b.signal.localeCompare(a.signal),
   )
 }
 export function validPinSet(

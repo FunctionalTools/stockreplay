@@ -176,7 +176,10 @@ function Rules({
   change: (g: Group) => void
 }) {
   const update = (i: number, patch: Partial<Rule>) =>
-    change({ ...group, rules: group.rules.map((r, j) => (i === j ? { ...r, ...patch } : r)) })
+    change({
+      ...group,
+      rules: group.rules.map((r, j) => (i === j ? { ...r, ...patch } : r)),
+    })
   return (
     <fieldset>
       <legend>{label}</legend>
@@ -283,7 +286,12 @@ function Rules({
             <button
               type="button"
               className="text-btn negative"
-              onClick={() => change({ ...group, rules: group.rules.filter((_, j) => j !== i) })}
+              onClick={() =>
+                change({
+                  ...group,
+                  rules: group.rules.filter((_, j) => j !== i),
+                })
+              }
             >
               Remove condition
             </button>
@@ -360,11 +368,13 @@ export function Builder({
                 value={c.source}
                 onChange={(e) => patch({ source: e.target.value as Source })}
               >
-                {Object.entries(sourceName).map(([s, n]) => (
-                  <option value={s} key={s}>
-                    {n}
-                  </option>
-                ))}
+                {Object.entries(sourceName)
+                  .filter(([s]) => s !== 'demo' || initial.source === s)
+                  .map(([s, n]) => (
+                    <option value={s} key={s}>
+                      {n}
+                    </option>
+                  ))}
               </select>
             </Field>
           </div>
@@ -481,7 +491,11 @@ export function Builder({
                     max={max}
                     step={step}
                     value={c.stats[k]}
-                    onChange={(e) => patch({ stats: { ...c.stats, [k]: Number(e.target.value) } })}
+                    onChange={(e) =>
+                      patch({
+                        stats: { ...c.stats, [k]: Number(e.target.value) },
+                      })
+                    }
                   />
                 </Field>
               ))}

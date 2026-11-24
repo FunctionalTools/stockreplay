@@ -2,32 +2,33 @@ import csv
 import io
 import os
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta
-from functools import lru_cache
+from datetime import timedelta
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
-import exchange_calendars as xc
 import numpy as np
 import pandas as pd
 import yfinance as yf
 
 from .symbols import NAMES
+from .trading_calendar import calendar, latest_session
 
-ROOT = Path(__file__).resolve().parents[1]
 yf.set_tz_cache_location(
     str(Path(os.environ.get("STOCKREPLAY_HOME", ".stockreplay")) / "provider-cache")
 )
-COLUMNS = ["Open", "High", "Low", "Close", "Adj Close", "Volume", "Dividends", "Stock Splits"]
+COLUMNS = [
+    "Open",
+    "High",
+    "Low",
+    "Close",
+    "Adj Close",
+    "Volume",
+    "Dividends",
+    "Stock Splits",
+]
 
 
 class MarketError(ValueError):
     pass
-
-
-@lru_cache(maxsize=1)
-def calendar():
-    return xc.get_calendar("XNYS", start="1989-01-01", end=f"{datetime.now().year + 2}-12-31")
 
 
 def sessions(start, end):
@@ -135,14 +136,7 @@ def load_one(db, config, ticker, expected, pin=None, refresh=False):
     first, last = [x.date().isoformat() for x in [expected[0], expected[-1]]]
     key = pin or (None if refresh else db.find(ticker, config.source, first, last))
     if not key:
-        if config.source == "demo":
-            path = ROOT / "data" / "demo" / f"{ticker}.csv"
-            if not path.is_file():
-                raise MarketError(
-                    f"The synthetic bundle has no {ticker} series. Choose NVDA, AAPL, MSFT or SPY."
-                )
-            frame = read_csv(path.read_text())
-        elif config.source == "csv":
+        if config.source == "csv":
             raise MarketError(f"Import a CSV for {ticker} covering {first} through {last}.")
         else:
             frame = yahoo(ticker, config.start, config.end)
@@ -160,12 +154,10 @@ def load_market(db, config, pins=None, refresh=False):
     expected = sessions(config.start, config.end)
     if not len(expected):
         raise MarketError("The range contains no trading sessions.")
-    if config.source == "yahoo":
-        now = datetime.now(ZoneInfo("America/New_York"))
-        if expected[-1].date() == now.date() and pd.Timestamp(now) <= calendar().session_close(
-            expected[-1]
-        ):
-            raise MarketError("Today's daily bar is still open. Choose the last completed session.")
+    if config.source == "demo" and not pins:
+        raise MarketError("Legacy synthetic experiments require their original pinned snapshots.")
+    if config.source == "yahoo" and expected[-1].date() > latest_session():
+        raise MarketError("Choose an end date through the latest completed US trading session.")
     if pins is not None and set(pins) != set(config.symbols()):
         raise MarketError("Pinned snapshots must match all required symbols.")
 

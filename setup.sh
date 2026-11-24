@@ -42,10 +42,10 @@ if [ ! -x frontend/node_modules/.bin/vite ] || [ "$stamp" != "$(cat .local/npm-s
   echo "$stamp" > .local/npm-stamp
 fi
 npm --prefix frontend run build
-if [ -z "${PLAYWRIGHT_CHROMIUM_EXECUTABLE:-}" ] && ! command -v chromium >/dev/null; then
+if [ -z "${PLAYWRIGHT_CHROMIUM_EXECUTABLE:-}" ]; then
   (cd frontend && ./node_modules/.bin/playwright install chromium)
 fi
-if [ "${STOCKREPLAY_SKIP_AI:-0}" = 1 ]; then echo "Builder setup complete. Run ./start.sh."; exit 0; fi
+if [ "${STOCKREPLAY_SKIP_AI:-0}" = 1 ]; then echo "Market workspace ready. Run ./start.sh."; exit 0; fi
 if ! command -v ollama >/dev/null && ! curl -fsS --max-time 2 "http://$OLLAMA_HOST/api/tags" >/dev/null 2>&1; then
   if command -v brew >/dev/null; then
     brew install ollama

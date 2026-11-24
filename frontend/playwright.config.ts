@@ -1,5 +1,4 @@
 import { defineConfig } from '@playwright/test'
-import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 process.env.PLAYWRIGHT_BROWSERS_PATH ??= fileURLToPath(
   new URL('../.local/browsers', import.meta.url),
@@ -12,13 +11,15 @@ export default defineConfig({
   timeout: 240000,
   expect: { timeout: 20000 },
   use: {
+    browserName: process.env.STOCKREPLAY_BROWSER === 'webkit' ? 'webkit' : 'chromium',
     baseURL: 'http://127.0.0.1:' + port,
     viewport: { width: 1440, height: 960 },
     trace: 'retain-on-failure',
     launchOptions: {
       executablePath:
-        process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE ||
-        (existsSync('/usr/bin/chromium') ? '/usr/bin/chromium' : undefined),
+        process.env.STOCKREPLAY_BROWSER === 'webkit'
+          ? undefined
+          : process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE,
     },
   },
   webServer: {

@@ -1,3 +1,4 @@
+import { OpenAISettings } from './ResearchDesk'
 import { useEffect, useRef, useState } from 'react'
 import {
   ArrowRight,
@@ -411,7 +412,11 @@ export function Compare({ items }: { items: LibraryItem[] }) {
     setBusy(true)
     setError('')
     try {
-      const v = await api<Comparison>('/comparisons', 'POST', { left, right, name })
+      const v = await api<Comparison>('/comparisons', 'POST', {
+        left,
+        right,
+        name,
+      })
       setView({ ...v, name })
       await load()
     } catch (e) {
@@ -575,7 +580,12 @@ export function DataPage({ defaults }: { defaults: Config }) {
               <input
                 required
                 value={config.benchmark}
-                onChange={(e) => setConfig({ ...config, benchmark: e.target.value.toUpperCase() })}
+                onChange={(e) =>
+                  setConfig({
+                    ...config,
+                    benchmark: e.target.value.toUpperCase(),
+                  })
+                }
               />
             </Field>
             <button className="btn primary fit" disabled={!!busy}>
@@ -608,7 +618,10 @@ export function DataPage({ defaults }: { defaults: Config }) {
                   'Importing',
                   async () => {
                     if (file.size > 6000000) throw Error('Choose a CSV under 6 MB.')
-                    return api('/data/import', 'POST', { ticker, csv: await file.text() })
+                    return api('/data/import', 'POST', {
+                      ticker,
+                      csv: await file.text(),
+                    })
                   },
                   'CSV validated and cached.',
                 )
@@ -690,7 +703,7 @@ export function DataPage({ defaults }: { defaults: Config }) {
                     {x.first} — {x.last}
                   </td>
                   <td>{x.rows}</td>
-                  <td>{x.fetched.slice(0, 16).replace('setTicker', ' ')}</td>
+                  <td>{x.fetched.slice(0, 16).replace('T', ' ')}</td>
                   <td>
                     <a
                       aria-label={'Export ' + x.ticker + ' CSV'}
@@ -742,10 +755,11 @@ export function SettingsPage({ ai, update }: { ai: AIStatus; update: (a: AIStatu
     <>
       <div className="page-head">
         <div>
-          <h1>Local AI settings</h1>
-          <p>Manage the Ollama model used for interpretation and evidence summaries.</p>
+          <h1>AI and data settings</h1>
+          <p>Connect OpenAI for market recommendations and manage local Ollama interpretation.</p>
         </div>
       </div>
+      <OpenAISettings />
       <section className="panel form-panel">
         <div className="panel-head flush">
           <div className="title-icon">
@@ -811,9 +825,9 @@ export function SettingsPage({ ai, update }: { ai: AIStatus; update: (a: AIStatu
       <section className="panel form-panel">
         <h3>Data attribution</h3>
         <p className="helper">
-          Historical Yahoo Finance data is fetched via yfinance for personal research. Bundled
-          examples are generated synthetic series. Candlestick rendering uses TradingView
-          Lightweight Charts™. Copyright © 2025 TradingView, Inc.
+          Prices come from Yahoo Finance. Research uses public news and dated ratings from Yahoo
+          Finance, Nasdaq, Stock Analysis and Federal Reserve releases. Candlestick rendering uses
+          TradingView Lightweight Charts™. Copyright © 2025 TradingView, Inc.
         </p>
         <a
           className="text-btn"
