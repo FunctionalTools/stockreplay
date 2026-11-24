@@ -1,0 +1,33 @@
+name: macOS verification
+on: [push, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  macos:
+    runs-on: macos-15
+    timeout-minutes: 25
+    env:
+      STOCKREPLAY_SKIP_AI: "1"
+      STOCKREPLAY_NO_BROWSER: "1"
+      UV_PYTHON: "3.12"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: astral-sh/setup-uv@v6
+      - name: Install and build on macOS
+        run: ./setup.sh
+      - name: Run deterministic engine and interface tests
+        run: |
+          .venv/bin/python -m pytest -q
+          npm --prefix frontend test
+          npm --prefix frontend run e2e
+      - name: Verify local service lifecycle
+        run: |
+          ./start.sh
+          curl --fail http://127.0.0.1:8765/api/health
+          ./stop.sh

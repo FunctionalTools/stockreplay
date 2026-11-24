@@ -1,4 +1,9 @@
 # Shared by setup, start and stop. These paths stay inside this checkout.
+if [ "$(uname -s)" != Darwin ]; then
+  echo "StockReplay requires macOS. Run this checkout on an Apple Silicon or Intel Mac." >&2
+  exit 1
+fi
+umask 077
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 export PATH="$ROOT/.local/bin:$ROOT/.local/node/bin:$ROOT/.local/ollama/bin:$ROOT/.local/ollama:$PATH"

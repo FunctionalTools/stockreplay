@@ -2,13 +2,10 @@
 set -euo pipefail
 source "$(dirname "$0")/scripts/paths.sh"
 mkdir -p .local/bin "$STOCKREPLAY_HOME"
-os="$(uname -s)"
 arch="$(uname -m)"
-case "$os" in Darwin) ram="$(sysctl -n hw.memsize)"; node_os=darwin ;; Linux) ram="$(awk '/MemTotal/{printf "%.0f",$2*1024}' /proc/meminfo)"; node_os=linux
-  if [ -r /sys/fs/cgroup/memory.max ]; then limit="$(cat /sys/fs/cgroup/memory.max)"; if [[ "$limit" =~ ^[0-9]+$ ]] && [ "$limit" -lt "$ram" ]; then ram="$limit"; fi; fi ;;
-*) echo "Use macOS or Linux (including WSL2)."; exit 1 ;; esac
-case "$arch" in arm64|aarch64) node_arch=arm64; ollama_arch=arm64 ;; x86_64|amd64) node_arch=x64; ollama_arch=amd64 ;; *) echo "Unsupported CPU architecture: $arch"; exit 1 ;; esac
-echo "StockReplay setup · $os $arch · $((ram/1073741824)) GiB RAM"
+ram="$(sysctl -n hw.memsize)"
+case "$arch" in arm64) node_arch=arm64 ;; x86_64) node_arch=x64 ;; *) echo "Unsupported Mac processor: $arch"; exit 1 ;; esac
+echo "StockReplay setup · macOS $(sw_vers -productVersion) · $arch · $((ram/1073741824)) GiB RAM"
 df -h "$ROOT" | tail -1
 command -v curl >/dev/null || { echo "Install curl to download official releases."; exit 1; }
 if ! command -v uv >/dev/null; then
@@ -24,7 +21,7 @@ fi
 uv sync --locked --python "$pybin"
 if ! command -v node >/dev/null || ! command -v npm >/dev/null || ! node -e 'process.exit(+process.versions.node.split(".")[0]>=20?0:1)'; then
   node_version=v22.16.0
-  archive="node-$node_version-$node_os-$node_arch.tar.gz"
+  archive="node-$node_version-darwin-$node_arch.tar.gz"
   curl -fsSL --retry 2 "https://nodejs.org/dist/$node_version/$archive" -o ".local/$archive"
   curl -fsSL --retry 2 "https://nodejs.org/dist/$node_version/SHASUMS256.txt" -o .local/node-shasums
   .venv/bin/python - "$archive" <<'PY'
@@ -50,23 +47,13 @@ if [ -z "${PLAYWRIGHT_CHROMIUM_EXECUTABLE:-}" ] && ! command -v chromium >/dev/n
 fi
 if [ "${STOCKREPLAY_SKIP_AI:-0}" = 1 ]; then echo "Builder setup complete. Run ./start.sh."; exit 0; fi
 if ! command -v ollama >/dev/null && ! curl -fsS --max-time 2 "http://$OLLAMA_HOST/api/tags" >/dev/null 2>&1; then
-  if [ "$os" = Darwin ] && command -v brew >/dev/null; then
+  if command -v brew >/dev/null; then
     brew install ollama
   else
     mkdir -p .local/ollama
-    if [ "$os" = Darwin ]; then
-      curl -fL --retry 2 https://ollama.com/download/ollama-darwin.tgz -o .local/ollama.tgz
-      tar xzf .local/ollama.tgz -C .local/ollama
-      rm .local/ollama.tgz
-    else
-      curl -fL --retry 2 "https://ollama.com/download/ollama-linux-$ollama_arch.tar.zst" -o .local/ollama.tar.zst
-      if command -v zstd >/dev/null; then
-        tar --zstd -xf .local/ollama.tar.zst -C .local/ollama
-      else
-        uv run --no-project --with zstandard python -c 'import zstandard,sys; zstandard.ZstdDecompressor().copy_stream(open(".local/ollama.tar.zst","rb"),sys.stdout.buffer)' | tar -xf - -C .local/ollama
-      fi
-      rm .local/ollama.tar.zst
-    fi
+    curl -fL --retry 2 https://ollama.com/download/ollama-darwin.tgz -o .local/ollama.tgz
+    tar xzf .local/ollama.tgz -C .local/ollama
+    rm .local/ollama.tgz
   fi
 fi
 if [ -z "${STOCKREPLAY_MODEL:-}" ]; then
