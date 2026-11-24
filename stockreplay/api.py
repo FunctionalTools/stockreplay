@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from . import ENGINE_VERSION, ai
+from . import ENGINE_VERSION
 from .engine import analyze
 from .exports import bundle, event_csv, import_bundle, report
 from .market import MarketError, load_market, read_csv, search_symbols, store_frame
@@ -21,12 +21,10 @@ from .schema import (
     Comparison,
     CsvUpload,
     Experiment,
-    InterpretationRequest,
     NoteEdit,
     RobustnessRequest,
     RunRequest,
     SavedRun,
-    Settings,
 )
 from .store import Store
 from .terminal_api import register
@@ -80,10 +78,6 @@ def create_app(root=None):
     @app.exception_handler(KeyError)
     async def missing(request, exc):
         return JSONResponse({"detail": str(exc.args[0])}, status_code=404)
-
-    @app.exception_handler(ai.AIUnavailable)
-    async def offline(request, exc):
-        return JSONResponse({"detail": str(exc)}, status_code=503)
 
     @app.exception_handler(RequestValidationError)
     async def invalid(request, exc):
@@ -167,19 +161,6 @@ def create_app(root=None):
                 conn.execute("insert or replace into opening_runs values(?,?)", (signature, key))
             return output(key)
 
-    @app.get("/api/ai")
-    def ai_status():
-        return ai.status(db.model())
-
-    @app.put("/api/settings")
-    def settings(value: Settings):
-        db.set_model(value.model)
-        return ai.status(value.model)
-
-    @app.post("/api/interpret")
-    def interpret(request: InterpretationRequest):
-        return ai.interpret(request, db.model())
-
     @app.post("/api/jobs", status_code=202)
     def submit(request: RunRequest):
         job = uuid.uuid4().hex
@@ -226,29 +207,6 @@ def create_app(root=None):
     @app.get("/api/runs/{key}")
     def get_run(key: str):
         return output(key)
-
-    @app.post("/api/runs/{key}/explain")
-    def explain(key: str):
-        r = output(key)
-        answer = ai.explain(r, db.model(), r.get("robustness"))
-        with db.connect() as conn:
-            previous = r.get("robustness")
-            updated = conn.execute(
-                """insert into research(run_id,explanation) values(?,?)
-                   on conflict(run_id) do update set explanation=excluded.explanation
-                   where research.robustness is ?""",
-                (
-                    key,
-                    json.dumps(answer),
-                    json.dumps(previous) if previous is not None else None,
-                ),
-            )
-            if not updated.rowcount:
-                raise HTTPException(
-                    409,
-                    "Robustness results changed during generation. Regenerate the explanation.",
-                )
-        return answer
 
     @app.post("/api/runs/{key}/robustness")
     def robustness(key: str, request: RobustnessRequest):

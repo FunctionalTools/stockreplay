@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       live_providers:
-        description: Verify current public providers and the live TradingView frame
+        description: Verify current public prices, news and analyst estimates
         type: boolean
         default: false
 permissions:
@@ -19,7 +19,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 25
     env:
-      STOCKREPLAY_SKIP_AI: "1"
+      STOCKREPLAY_INSTALL_BROWSERS: "1"
       STOCKREPLAY_NO_BROWSER: "1"
       UV_PYTHON: "3.12"
     steps:
@@ -58,8 +58,13 @@ jobs:
           STOCKREPLAY_LIVE_TESTS: "1"
         run: |
           .venv/bin/python -m pytest -q -s tests/test_terminal.py -k live_public_sources
-      - name: Verify the provider-hosted chart and research UI
+      - name: Verify live market research in the browser
         if: always() && github.event_name == 'workflow_dispatch' && inputs.live_providers && matrix.runner == 'macos-15'
         env:
           STOCKREPLAY_LIVE_TESTS: "1"
-        run: npm --prefix frontend run e2e -- terminal.spec.ts --grep "native chart studies|public research"
+        run: npm --prefix frontend run e2e -- terminal.spec.ts --grep "live public research"
+      - name: Verify the selected OpenAI model with a dedicated project key when available
+        if: github.event_name == 'workflow_dispatch' && inputs.live_providers && matrix.runner == 'macos-15'
+        env:
+          STOCKREPLAY_TEST_OPENAI_KEY: ${{ secrets.STOCKREPLAY_TEST_OPENAI_KEY }}
+        run: .venv/bin/python -m pytest -q -rs tests/test_terminal.py -k live_openai_generation

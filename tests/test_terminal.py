@@ -3,7 +3,6 @@
 import json
 import os
 import sys
-from datetime import date
 from pathlib import Path
 
 import httpx
@@ -226,84 +225,179 @@ def brief():
 
 
 def test_openai_explicit_public_only_contract(client, monkeypatch):
-    # This credential is a test sentinel. HTTP is intercepted before leaving the test process.
-    secret = "test-only-credential-for-intercepted-transport"
-    t = client.app.state.terminal
+    from tests.provider_fixture import completed, assessment
+
+    secret = "isolated-intercepted-test-credential"
+    terminal = client.app.state.terminal
     source = brief()
-    monkeypatch.setattr(t.desk, "briefing", lambda symbol: source)
-    assert client.post("/api/desk/recommend/NVDA").status_code == 409
-    status = client.put("/api/openai", json={"key": secret, "model": "gpt-4.1-mini"})
-    assert status.is_success and secret not in status.text
-    assert client.post(
-        "/api/holdings/accounts",
-        json={"institution": "Private Bank", "name": "Secret Portfolio"},
-    ).is_success
-    point = lambda text, *ids: {"text": text, "citations": list(ids)}
-    opinion = {
-        "stance": "Neutral",
-        "horizon": "Weeks",
-        "thesis": point("Momentum is mixed.", "price", "market"),
-        "catalysts": [point("Issuer news supports demand.", "company_news")],
-        "risks": [point("Sector weakness could persist.", "sector_news")],
-        "reconsider": point("Watch monetary policy.", "macro_news"),
-    }
+    source["current_context"] = False
+    source["evidence"][0]["text"] = "Last return +5.00%"
+    monkeypatch.setattr(terminal.desk, "briefing", lambda s: source)
+    client.post(
+        "/api/holdings/accounts", json={"institution": "Private Bank", "name": "Secret Portfolio"}
+    )
     sent = []
+    mutation = {}
 
     def intercept(req):
-        assert (
-            req.url.host == "api.openai.com" and req.headers["authorization"] == "Bearer " + secret
-        )
-        sent.append(req)
+        assert req.url.host == "api.openai.com"
         if req.method == "GET":
-            return httpx.Response(200, json={"id": "gpt-4.1-mini"})
+            return httpx.Response(403, json={"error": {"code": "insufficient_permissions"}})
         assert req.url.path == "/v1/responses"
-        payload = json.loads(req.content)
-        assert payload["store"] is False and payload["text"]["format"]["strict"] is True
+        body = json.loads(req.content)
+        name = body["text"]["format"]["name"]
+        sent.append((name, body["model"]))
+        assert req.headers["Authorization"] == "Bearer " + secret and body["store"] is False
         assert all(
-            x not in req.content.decode()
-            for x in [
-                "Private Bank",
-                "Secret Portfolio",
-                "PRIVATE ACCOUNT NOTE",
-                secret,
-            ]
+            v not in req.content.decode()
+            for v in (secret, "Private Bank", "Secret Portfolio", "PRIVATE ACCOUNT NOTE")
         )
-        assert set(json.loads(payload["input"])) == {"as_of", "symbol", "evidence"}
-        return httpx.Response(
-            200,
-            json={
-                "status": "completed",
-                "output": [
-                    {
-                        "type": "message",
-                        "content": [{"type": "output_text", "text": json.dumps(opinion)}],
-                    }
-                ],
-            },
-        )
+        if body["model"] == "unavailable":
+            return httpx.Response(404, json={"error": {"code": "model_not_found"}})
+        if name == "connection_check":
+            return completed({"result": "ready"})
+        data = json.loads(body["input"])
+        assert "market_session" in data and data["sector_current"] is False
+        return completed({**assessment(data), **mutation})
 
-    t.openai.transport = httpx.MockTransport(intercept)
-    assert client.post("/api/openai/test").is_success
+    terminal.openai.transport = httpx.MockTransport(intercept)
+    assert client.post("/api/desk/recommend/NVDA").status_code == 409 and not sent
+    saved = client.put("/api/openai", json={"key": "  " + secret + "  "}).json()
+    assert (
+        saved["verified"]
+        and saved["verified_at"]
+        and sent == [("connection_check", saved["model"])]
+    )
+    assert client.get("/api/openai/models?discover=true").json()["models"]
+    assert client.put("/api/openai", json={"model": "unavailable"}).status_code == 404
+    assert client.get("/api/openai").json()["model"] == saved["model"]
     result = client.post("/api/desk/recommend/NVDA")
-    assert result.is_success and len(result.json()["sources"]) == 5
-    saved = client.get("/api/desk/recommend/NVDA").json()
-    assert saved == [result.json()] and client.get("/api/desk/recommend/SPY").json() == []
-    opinion["thesis"]["text"] = "Expect 999% upside."
+    assert result.is_success, result.text
+    assert result.json()["buy_score"] == 72 and result.json()["risk_score"] == 58
+    assert sent[-1] == ("stock_scores", saved["model"])
+    assert client.get("/api/desk/recommend/NVDA").json() == [result.json()]
+    assert client.get("/api/desk/recommend/MSFT").json() == []
+    mutation["summary"] = {"text": "unsupported citation", "source": "unknown"}
     assert client.post("/api/desk/recommend/NVDA").status_code == 502
-    opinion["thesis"] = point("Invalid citation.", "unknown")
+    mutation.clear()
+    mutation["risk_score"] = 102
     assert client.post("/api/desk/recommend/NVDA").status_code == 502
-    source["current_prices"] = False
-    count = len(sent)
-    assert client.post("/api/desk/recommend/NVDA").status_code == 409 and len(sent) == count
+    assert len(client.get("/api/desk/recommend/NVDA").json()) == 1
+    source["evidence"] = []
+    assert client.post("/api/desk/recommend/NVDA").status_code == 422
     invalid = client.put("/api/openai", json={"key": secret, "model": "/invalid"})
     assert invalid.status_code == 422 and secret not in invalid.text
     for suffix in ("", "-wal", "-shm"):
-        f = Path(str(t.db.path) + suffix)
+        f = Path(str(terminal.db.path) + suffix)
         if f.is_file():
             assert secret.encode() not in f.read_bytes()
-    with TestClient(create_app(t.db.path.parent)) as another:
+    with TestClient(create_app(terminal.db.path.parent)) as another:
         assert not another.get("/api/openai").json()["configured"]
     assert not client.delete("/api/openai").json()["configured"]
+
+
+@pytest.mark.parametrize(
+    "status,code,message",
+    [
+        (401, "invalid_api_key", "rejected"),
+        (429, "insufficient_quota", "credits"),
+        (429, "rate_limit_exceeded", "rate limit"),
+        (403, "insufficient_permissions", "permission"),
+        (404, "model_not_found", "unavailable"),
+    ],
+)
+def test_generation_probe_surfaces_provider_errors(client, status, code, message):
+    def reject(req):
+        assert req.method == "POST" and req.url.path == "/v1/responses"
+        return httpx.Response(
+            status, headers={"x-request-id": "req_test"}, json={"error": {"code": code}}
+        )
+
+    client.app.state.terminal.openai.transport = httpx.MockTransport(reject)
+    response = client.put("/api/openai", json={"key": "intercepted-dummy-value"})
+    assert response.is_error and message in response.text and "req_test" in response.text
+    assert client.get("/api/openai").json()["verified"] is False
+
+
+def test_candidate_model_discovery_does_not_store_or_verify_key(client):
+    calls = []
+
+    def listing(req):
+        calls.append(req)
+        return httpx.Response(
+            200, json={"data": [{"id": "gpt-4o-mini"}, {"id": "text-embedding-3-small"}]}
+        )
+
+    client.app.state.terminal.openai.transport = httpx.MockTransport(listing)
+    result = client.post("/api/openai/models", json={"key": "intercepted-dummy-value"})
+    assert result.json() == {
+        "models": [{"id": "gpt-4o-mini", "label": "GPT-4o mini"}],
+        "source": "project",
+    }
+    assert calls[0].method == "GET" and calls[0].url.path == "/v1/models"
+    assert not client.get("/api/openai").json()["configured"]
+
+
+def test_retries_incomplete_output(client):
+    from tests.provider_fixture import completed
+
+    budgets = []
+
+    def respond(req):
+        body = json.loads(req.content)
+        budgets.append(body["max_output_tokens"])
+        if len(budgets) == 1:
+            return httpx.Response(
+                200,
+                json={
+                    "status": "incomplete",
+                    "incomplete_details": {"reason": "max_output_tokens"},
+                },
+            )
+        return completed({"result": "ready"})
+
+    client.app.state.terminal.openai.transport = httpx.MockTransport(respond)
+    assert client.put(
+        "/api/openai", json={"key": "intercepted-dummy-value", "model": "gpt-5-mini"}
+    ).json()["verified"]
+    assert len(budgets) == 2 and budgets[1] > budgets[0]
+
+
+def test_watch_import_and_preferences(client):
+    p = "/api/watchlists/default/import"
+    assert client.post(p, json={"content": "Symbol,Notes\nMSFT,one\nNVDA,two"}).json()["added"] == 2
+    assert client.post(p, json={"content": "NVDA\nMSFT"}).json()["existing"] == 2
+    assert client.post(p, json={"content": "AAPL\nbad value!"}).status_code == 422
+    assert sorted(client.get("/api/watchlists").json()[0]["symbols"]) == ["MSFT", "NVDA"]
+    client.patch("/api/preferences", json={"appearance": "dark", "advanced": True})
+    assert (
+        client.patch("/api/preferences", json={"accent": "violet"}).json()["appearance"] == "dark"
+    )
+    assert client.patch("/api/preferences", json={"home_symbol": "bad value!"}).status_code == 422
+
+
+def test_chat_privacy_and_actions(client):
+    from tests.provider_fixture import respond
+
+    calls = []
+
+    def intercept(req):
+        assert "PRIVATE_ACCOUNT" not in req.content.decode()
+        calls.append(req)
+        return respond(req)
+
+    client.app.state.terminal.openai.transport = httpx.MockTransport(intercept)
+    client.put("/api/openai", json={"key": "intercepted-dummy-value"})
+    client.post("/api/holdings/accounts", json={"name": "PRIVATE_ACCOUNT", "institution": "Local"})
+    data = {
+        "page": "Research",
+        "symbol": "NVDA",
+        "messages": [{"role": "user", "text": "Chart prices"}],
+    }
+    assert client.post("/api/assistant", json=data).json()["actions"][0]["kind"] == "chart"
+    count = len(calls)
+    data["messages"][0]["text"] = "sk-do-not-send-this-api-key"
+    assert client.post("/api/assistant", json=data).status_code == 422 and len(calls) == count
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="macOS Keychain integration")
@@ -321,7 +415,9 @@ def test_native_keychain_lifecycle(tmp_path, monkeypatch):
         kc.keychain = path
         monkeypatch.setattr(research, "keychain", lambda: kc)
         store = Store(tmp_path / "state")
-        client = research.OpenAIResearch(store)
+        from tests.provider_fixture import respond
+
+        client = research.OpenAIResearch(store, httpx.MockTransport(respond))
         key = "intercepted-macos-keychain-test-value"
         client.set(research.KeySettings(key=key, remember=True))
         assert research.OpenAIResearch(store).credentials()[0] == key
@@ -342,17 +438,57 @@ def test_live_public_sources(client):
     )
     r = client.get("/api/desk/ratings/NVDA").json()
     assert r["stockreplay"] and r["actions"]["data"] and r["consensus"]["data"]
-    for name in ("nasdaq", "stockanalysis"):
+    for name in ("forecast", "stockanalysis"):
         packet = r[name]
         if packet["data"] is None:
             assert packet["error"] and not packet["stale"]
             print(f"{name} reported unavailability: {packet['error']}")
-    assert r["nasdaq"]["data"] or r["stockanalysis"]["data"], (
+    assert r["forecast"]["data"] or r["stockanalysis"]["data"], (
         "Both independent ratings publishers were unavailable."
     )
+    forecast = r["forecast"]["data"]
+    assert (
+        forecast
+        and forecast["grade"]
+        and forecast["count"] > 0
+        and forecast["targets"]["average"] > 0
+        and sum(forecast["votes"].values()) > 0
+    )
     b = client.get("/api/desk/brief/NVDA").json()
+    assert {"estimates", "risk"} <= {e["group"] for e in b["evidence"]}
+    assert any(
+        e["group"] == "company_news" and e["url"].startswith("https://") for e in b["evidence"]
+    )
     assert b["current_context"] and b["current_prices"]
     assert {"company_news", "sector_news", "market", "price"} <= {x["group"] for x in b["evidence"]}
     print(
         f"NVDA through {b['as_of']}: {len(b['evidence'])} evidence items, {len(r['actions']['data'])} Yahoo actions and {len(r['stockanalysis']['data'] or [])} Stock Analysis disclosures."
     )
+
+
+@pytest.mark.skipif(
+    not os.environ.get("STOCKREPLAY_TEST_OPENAI_KEY"),
+    reason="Requires a dedicated OpenAI project key",
+)
+def test_live_openai_generation(client):
+    status = client.put(
+        "/api/openai",
+        json={
+            "key": os.environ["STOCKREPLAY_TEST_OPENAI_KEY"],
+            "model": os.environ.get("STOCKREPLAY_TEST_OPENAI_MODEL", "gpt-4.1-mini"),
+        },
+    )
+    assert status.is_success and status.json()["verified"], status.text
+    output = client.post("/api/desk/recommend/NVDA")
+    assert output.is_success, output.text
+    result = output.json()
+    assert all(0 <= result[k] <= 100 for k in ("buy_score", "risk_score")) and result["sources"]
+    chat = client.post(
+        "/api/assistant",
+        json={
+            "page": "Research",
+            "symbol": "NVDA",
+            "messages": [{"role": "user", "text": "Plot MSFT over one year."}],
+        },
+    )
+    assert chat.is_success and any(a["kind"] == "chart" for a in chat.json()["actions"]), chat.text

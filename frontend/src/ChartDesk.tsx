@@ -12,18 +12,9 @@ import {
 } from 'lightweight-charts'
 import { Download, Play, Pause, Save } from 'lucide-react'
 import { api, errorText } from './types'
-import {
-  PageHead,
-  useResource,
-  TickerBar,
-  PacketNote,
-  FetchState,
-  SourceLink,
-  fmt,
-  type Packet,
-  type Navigate,
-} from './deskCommon'
+import { useResource, PacketNote, FetchState, SourceLink, fmt, type Packet } from './deskCommon'
 import { Field, ErrorBox } from './ui'
+import type { Intent } from './workspace'
 import { indicatorsFor, type Bar, type Sample } from './studies'
 type Series = {
   symbol: string
@@ -36,7 +27,7 @@ type Series = {
   latest_completed_session: string
 }
 type Drawing = {
-  kind: 'horizontal' | 'trend'
+  kind: 'horizontal' | 'trend' | 'box'
   time: number
   price: number
   end_time?: number
@@ -89,10 +80,6 @@ const studyNames = [
   'MACD',
   'Dividends & splits',
 ]
-const green = '#79dbb1',
-  red = '#e28d91',
-  gold = '#ecc378',
-  blue = '#87b9ed'
 const ts = (v: number) => v as UTCTimestamp
 const line = (points: Sample[]) => points.map((p) => ({ ...p, time: ts(p.time) }))
 type MountProps = {
@@ -110,6 +97,21 @@ function Canvas({ data, comparison, layout, count, draw, pick, handle }: MountPr
     [hover, show] = useState('')
   const drawRef = useRef(draw),
     pickRef = useRef(pick)
+  const [palette, refreshPalette] = useState(0)
+  useEffect(() => {
+    const refresh = () => refreshPalette((n) => n + 1)
+    const observer = new MutationObserver(refresh)
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-mode', 'data-accent'],
+    })
+    const system = window.matchMedia('(prefers-color-scheme: dark)')
+    system.addEventListener('change', refresh)
+    return () => {
+      observer.disconnect()
+      system.removeEventListener('change', refresh)
+    }
+  }, [])
   drawRef.current = draw
   pickRef.current = pick
   useEffect(() => {
@@ -141,18 +143,24 @@ function Canvas({ data, comparison, layout, count, draw, pick, handle }: MountPr
               : clock
       ).format(value)
     }
+    const css = getComputedStyle(el)
+    const color = (name: string) => css.getPropertyValue(name).trim()
+    const green = color('--accent'),
+      red = color('--risk'),
+      gold = color('--amber'),
+      blue = color('--blue')
     const options = {
       width: el.clientWidth,
       height: el.clientHeight || 400,
       layout: {
-        background: { type: ColorType.Solid, color: '#11171c' },
-        textColor: '#aab8bd',
+        background: { type: ColorType.Solid, color: css.getPropertyValue('--panel').trim() },
+        textColor: css.getPropertyValue('--muted').trim(),
         fontSize: 11,
         attributionLogo: false,
       },
       grid: {
-        vertLines: { color: '#1c262d' },
-        horzLines: { color: '#253039' },
+        vertLines: { color: css.getPropertyValue('--line').trim() },
+        horzLines: { color: css.getPropertyValue('--line').trim() },
       },
       crosshair: { mode: CrosshairMode.Normal },
       localization: {
@@ -168,16 +176,14 @@ function Canvas({ data, comparison, layout, count, draw, pick, handle }: MountPr
       handleScroll: { vertTouchDrag: false },
     }
     const chart = createChart(el, options)
-    chart
-      .priceScale('right')
-      .applyOptions({
-        mode: {
-          Linear: PriceScaleMode.Normal,
-          Logarithmic: PriceScaleMode.Logarithmic,
-          Percentage: PriceScaleMode.Percentage,
-          'Indexed to 100': PriceScaleMode.IndexedTo100,
-        }[layout.scale],
-      })
+    chart.priceScale('right').applyOptions({
+      mode: {
+        Linear: PriceScaleMode.Normal,
+        Logarithmic: PriceScaleMode.Logarithmic,
+        Percentage: PriceScaleMode.Percentage,
+        'Indexed to 100': PriceScaleMode.IndexedTo100,
+      }[layout.scale],
+    })
     handle.current = chart
     const candles = {
       upColor: green,
@@ -292,6 +298,33 @@ function Canvas({ data, comparison, layout, count, draw, pick, handle }: MountPr
         d.time !== d.end_time &&
         d.end_time <= bars[bars.length - 1].time
       ) {
+        if (d.kind === 'box') {
+          const endTime = d.end_time,
+            endPrice = d.end_price
+          base.attachPrimitive({
+            paneViews: () => [
+              {
+                zOrder: () => 'top',
+                renderer: () => ({
+                  draw: (target) =>
+                    target.useMediaCoordinateSpace(({ context: ctx }) => {
+                      const x1 = chart.timeScale().timeToCoordinate(ts(d.time)),
+                        x2 = chart.timeScale().timeToCoordinate(ts(endTime))
+                      const y1 = base.priceToCoordinate(d.price),
+                        y2 = base.priceToCoordinate(endPrice)
+                      if (x1 == null || x2 == null || y1 == null || y2 == null) return
+                      ctx.fillStyle = 'rgba(87,147,208,.18)'
+                      ctx.strokeStyle = '#558fd1'
+                      ctx.lineWidth = 1.5
+                      ctx.fillRect(x1, y1, x2 - x1, y2 - y1)
+                      ctx.strokeRect(x1, y1, x2 - x1, y2 - y1)
+                    }),
+                }),
+              },
+            ],
+          })
+          continue
+        }
         overlay(
           [
             { time: d.time, value: d.price },
@@ -302,11 +335,39 @@ function Canvas({ data, comparison, layout, count, draw, pick, handle }: MountPr
         )
       }
     }
-    chart.subscribeClick((e) => {
-      if (!drawRef.current || typeof e.time !== 'number' || !e.point) return
-      const p = base.coordinateToPrice(e.point.y)
-      if (p != null) pickRef.current(e.time, Number(p))
-    })
+    // Capture drawing clicks on the chart surface. Crosshair events may have no time
+    // immediately after a tool button scrolls the chart into view or on a touch screen.
+    let startPoint: { x: number; y: number } | null = null
+    const begin = (event: PointerEvent) => {
+      if (drawRef.current && event.button === 0) startPoint = { x: event.clientX, y: event.clientY }
+    }
+    const pickPoint = (event: PointerEvent) => {
+      const origin = startPoint
+      startPoint = null
+      if (
+        !drawRef.current ||
+        !origin ||
+        Math.hypot(event.clientX - origin.x, event.clientY - origin.y) > 7
+      )
+        return
+      const rect = el.getBoundingClientRect(),
+        x = event.clientX - rect.left,
+        y = event.clientY - rect.top
+      if (
+        x < 0 ||
+        x > chart.timeScale().width() ||
+        y < 0 ||
+        y > rect.height - chart.timeScale().height()
+      )
+        return
+      const logical = chart.timeScale().coordinateToLogical(x),
+        price = base.coordinateToPrice(y)
+      if (logical == null || price == null) return
+      const index = Math.max(0, Math.min(bars.length - 1, Math.round(Number(logical))))
+      pickRef.current(bars[index].time, Number(price))
+    }
+    el.addEventListener('pointerdown', begin, true)
+    el.addEventListener('pointerup', pickPoint, true)
     const byTime = new Map(bars.map((b) => [b.time, b]))
     chart.subscribeCrosshairMove((e) => {
       const b = byTime.get(Number(e.time))
@@ -358,6 +419,8 @@ function Canvas({ data, comparison, layout, count, draw, pick, handle }: MountPr
     })
     ro.observe(el)
     return () => {
+      el.removeEventListener('pointerdown', begin, true)
+      el.removeEventListener('pointerup', pickPoint, true)
       ro.disconnect()
       chart.timeScale().unsubscribeVisibleLogicalRangeChange(sync)
       chart.remove()
@@ -365,7 +428,7 @@ function Canvas({ data, comparison, layout, count, draw, pick, handle }: MountPr
       panes.forEach((p) => p.remove())
       osc.current?.replaceChildren()
     }
-  }, [data, comparison, layout, count, handle])
+  }, [data, comparison, layout, count, handle, palette])
   return (
     <>
       <div className="chart-legend" aria-live="off">
@@ -429,19 +492,19 @@ function CompanionChart({
 
 export function ChartDesk({
   symbol,
-  select,
-  go,
+  initialTool = '',
+  control,
 }: {
   symbol: string
-  select: (s: string) => void
-  go: Navigate
+  initialTool?: string
+  control?: Intent
 }) {
   const [layout, set] = useState<Layout>(defaultLayout),
     [ready, setReady] = useState(false),
     [compare, compareInput] = useState(''),
     [panelInput, setPanels] = useState(''),
     [panelRefresh, refreshPanels] = useState(0),
-    [draw, tool] = useState(''),
+    [draw, tool] = useState(initialTool),
     [start, first] = useState<{ time: number; price: number } | null>(null),
     [cursor, seek] = useState<number | null>(null),
     [playing, play] = useState(false),
@@ -468,6 +531,10 @@ export function ChartDesk({
       active = false
     }
   }, [symbol])
+  useEffect(() => {
+    tool(initialTool)
+    first(null)
+  }, [initialTool])
   const query = '?interval=' + layout.interval + '&span=' + layout.span
   const series = useResource<Packet<Series>>(
       ready ? '/desk/chart/' + encodeURIComponent(symbol) + query : null,
@@ -503,17 +570,14 @@ export function ChartDesk({
           drawings: [...l.drawings, { kind: 'horizontal', time, price }],
         }))
         tool('')
-      } else if (draw === 'trend') {
+      } else if (draw === 'trend' || draw === 'box') {
         if (!start) {
           first({ time, price })
           show('Select the second point on the chart.')
         } else if (time !== start.time) {
           set((l) => ({
             ...l,
-            drawings: [
-              ...l.drawings,
-              { kind: 'trend', ...start, end_time: time, end_price: price },
-            ],
+            drawings: [...l.drawings, { kind: draw, ...start, end_time: time, end_price: price }],
           }))
           first(null)
           tool('')
@@ -523,6 +587,45 @@ export function ChartDesk({
     },
     [draw, start],
   )
+  const handled = useRef(0)
+  useEffect(() => {
+    if (
+      !data ||
+      !ready ||
+      !control ||
+      !control.kind.startsWith('control_') ||
+      handled.current === control.seq
+    )
+      return
+    handled.current = control.seq
+    switch (control.kind.slice(8)) {
+      case 'play':
+        if (count >= total) seek(1)
+        play(true)
+        break
+      case 'pause':
+        play(false)
+        break
+      case 'latest':
+        play(false)
+        seek(null)
+        break
+      case 'undo':
+        change({ drawings: layout.drawings.slice(0, -1) })
+        break
+      case 'save':
+        void api('/desk/layout/' + encodeURIComponent(symbol), 'PUT', layout)
+          .then(() => show('Chart layout saved on this Mac.'))
+          .catch((e) => setErr(errorText(e)))
+        break
+      case 'export_csv':
+        downloadBars()
+        break
+      case 'export_png':
+        png()
+        break
+    }
+  }, [control, data, ready, count, total, layout, symbol])
   function png() {
     if (!handle.current) return
     const a = document.createElement('a')
@@ -561,26 +664,18 @@ export function ChartDesk({
   }
   return (
     <>
-      <PageHead
-        title="Charts"
-        description="Explore adjusted market prices, indicators, comparisons and bar-by-bar replay."
-      >
-        <button className="btn" onClick={() => go('TradingView tools', symbol)}>
-          TradingView tools ↗
-        </button>
-      </PageHead>
-      <TickerBar
-        symbol={symbol}
-        select={select}
-        refresh={() => {
-          refreshPanels((n) => n + 1)
-          series.reload(true)
-          if (layout.compare) comp.reload(true)
-        }}
-        busy={series.loading}
-      />
       <section className="panel desk-card">
         <div className="desk-toolbar">
+          <button
+            className="btn small"
+            onClick={() => {
+              series.reload(true)
+              if (layout.compare) comp.reload(true)
+              refreshPanels((n) => n + 1)
+            }}
+          >
+            Refresh chart
+          </button>
           <Field name="Chart interval">
             <select
               value={layout.interval}
@@ -786,7 +881,7 @@ export function ChartDesk({
               </button>
             </div>
             <div className="desk-toolbar">
-              {(['horizontal', 'trend'] as const).map((v) => (
+              {(['horizontal', 'trend', 'box'] as const).map((v) => (
                 <button
                   key={v}
                   className={'btn small ' + (draw === v ? 'primary' : '')}
@@ -798,12 +893,12 @@ export function ChartDesk({
                       draw === v
                         ? ''
                         : 'Select ' +
-                            (v === 'trend' ? 'two points' : 'a price level') +
+                            (v === 'horizontal' ? 'a price level' : 'two corners or points') +
                             ' on the chart.',
                     )
                   }}
                 >
-                  {v === 'trend' ? 'Trend line' : 'Horizontal level'}
+                  {v === 'box' ? 'Draw box' : v === 'trend' ? 'Trend line' : 'Horizontal level'}
                 </button>
               ))}
               <button
@@ -829,10 +924,7 @@ export function ChartDesk({
               </button>
             </div>
             <p role="status">{note}</p>
-            <SourceLink url={data.url}>{data.source} market history</SourceLink> ·{' '}
-            <SourceLink url="https://www.tradingview.com/lightweight-charts/">
-              Lightweight Charts by TradingView
-            </SourceLink>
+            <SourceLink url={data.url}>{data.source} market history</SourceLink>
           </>
         )}
       </section>

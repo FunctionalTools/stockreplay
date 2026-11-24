@@ -93,6 +93,61 @@ def curve_svg(result):
     return f'<svg viewBox="0 0 700 185" role="img" aria-label="Strategy and benchmark return curve"><rect width="700" height="185" fill="#101a20"/><polyline points="{points("benchmark")}" fill="none" stroke="#9bacc4" stroke-width="2"/><polyline points="{points("strategy")}" fill="none" stroke="#63d6a6" stroke-width="3"/></svg>'
 
 
+def facts(result, robust=None):
+    m, i = result["metrics"], result["inference"]
+    out = {
+        "sample": f"The engine observed {m['count']} qualifying "
+        + ("trades." if result["config"]["kind"] == "portfolio" else "events.")
+    }
+    if m["count"]:
+        out.update(
+            effect=f"Mean net return was {m['mean']:+.2f}%. The objective succeeded in {m['win_rate']:.1f}% of cases.",
+            benchmark=f"The matched benchmark averaged {m['benchmark']:+.2f}%, giving the asset a mean excess return of {m['excess']:+.2f} percentage points.",
+        )
+        failures = [e for e in result["events"] if not e["success"]]
+        if failures:
+            worst = min(failures, key=lambda e: e["effect"])
+            out["counter"] = (
+                f"{len(failures)} observations contradicted the objective. On {worst['signal']}, {worst['ticker']} subsequently returned {worst['return_pct']:+.2f}% versus {worst['benchmark_pct']:+.2f}% for the benchmark."
+            )
+        else:
+            out["counter"] = "Every observed event met the objective in this sample."
+        if i["low"] is not None:
+            null = 50 if result["config"]["objective"] == "recovery" else 0
+            conclusion = (
+                "The interval lies above the reference value."
+                if i["low"] > null
+                else "The interval lies below the reference value."
+                if i["high"] < null
+                else "The interval includes the reference value."
+            )
+            out["inference"] = (
+                f"The {i['confidence']:.0%} block-bootstrap interval for {i['quantity']} is [{i['low']:.2f}, {i['high']:.2f}]. {conclusion} The reference is {null}%."
+            )
+        else:
+            out["inference"] = (
+                "The sample provides insufficient independent variation for a block-bootstrap interval."
+            )
+    if "total_return" in m:
+        out["portfolio"] = (
+            f"The portfolio returned {m['total_return']:+.2f}% over the full study, compared with "
+            f"{m['benchmark_total']:+.2f}% for buying and holding the benchmark. "
+            f"Maximum peak-to-trough drawdown was {m['drawdown']:.2f}%."
+        )
+    out["limits"] = (
+        "Repeated testing, survivorship bias and regime changes limit interpretation. Association alone cannot establish causation."
+    )
+    if robust:
+        eligible = [c["test"]["effect"] for c in robust["cells"] if c["test"]["effect"] is not None]
+        if eligible:
+            out["robust"] = (
+                f"Across {len(eligible)} tested holdout settings, the {robust['quantity']} ranged from {min(eligible):+.2f} to {max(eligible):+.2f}."
+            )
+    if "robust" not in out:
+        out["robust"] = "Holdout sensitivity has yet to establish robustness for this experiment."
+    return out
+
+
 def report(result, notes=""):
     esc = lambda x: escape(str(x), quote=True)
     c = result["config"]
@@ -101,7 +156,6 @@ def report(result, notes=""):
         f"<tr><td>{esc(e['ticker'])}</td><td>{e['signal']}</td><td>{e['entry']}</td><td>{e['exit']}</td><td>{e['entry_price']:.3f}</td><td>{e['exit_price']:.3f}</td><td>{e['return_pct']:+.2f}%</td><td>{e['benchmark_pct']:+.2f}%</td><td>{'Yes' if e['success'] else 'No'}</td></tr>"
         for e in result["events"]
     )
-    from .ai import facts
 
     evidence = "".join(
         "<p>" + esc(s) + "</p>" for s in facts(result, result.get("robustness")).values()

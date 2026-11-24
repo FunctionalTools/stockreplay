@@ -1,4 +1,6 @@
 import json
+import csv
+import io
 import re
 import threading
 from contextlib import asynccontextmanager
@@ -9,9 +11,11 @@ from uuid import uuid4
 from fastapi import APIRouter
 from pydantic import Field, field_validator
 
+from . import assistant
+from .market import read_csv
 from .desk import Desk, INTERVALS, SCREENS, safe_url, screen
 from .holdings import AccountInput, Holdings, Position, Statement
-from .openai_research import KeySettings, OpenAIResearch
+from .openai_research import KeySettings, ModelLookup, OpenAIResearch
 from .schema import Model
 from .store import now
 
@@ -21,6 +25,22 @@ def ticker(raw):
     if not re.fullmatch(r"[A-Z0-9^][A-Z0-9.^=\-]{0,19}", value):
         raise ValueError("Enter a valid market symbol.")
     return value
+
+
+class Preferences(Model):
+    appearance: Literal["system", "light", "dark"] | None = None
+    accent: Literal["forest", "ocean", "violet", "amber"] | None = None
+    advanced: bool | None = None
+    home_symbol: str | None = None
+
+    @field_validator("home_symbol")
+    @classmethod
+    def valid_ticker(cls, value):
+        return ticker(value) if value is not None else None
+
+
+class ListImport(Model):
+    content: str = Field(min_length=1, max_length=1_000_000)
 
 
 class ListName(Model):
@@ -37,7 +57,7 @@ class AlertInput(SymbolInput):
 
 
 class Drawing(Model):
-    kind: Literal["horizontal", "trend"]
+    kind: Literal["horizontal", "trend", "box"]
     time: int = Field(ge=0)
     price: float
     end_time: int | None = None
@@ -95,6 +115,7 @@ class Terminal:
               create table if not exists market_recommendations(id text primary key, symbol text not null, created text not null,payload text not null);
               create index if not exists recommendations_by_symbol on market_recommendations(symbol,created);
               create table if not exists public_grades(id text primary key,symbol text not null,firm text not null,grade text not null,date text not null,url text not null,unique(symbol,firm,grade,date,url));
+              create table if not exists preferences(id integer primary key,payload text not null);
               create table if not exists terminal_init(id integer primary key);
             """)
             if c.execute("insert or ignore into terminal_init values(1)").rowcount:
@@ -201,6 +222,74 @@ def register(app, db):
             stopping.set()
 
     r = APIRouter(prefix="/api", lifespan=lifespan)
+
+    defaults = {
+        "appearance": "system",
+        "accent": "forest",
+        "advanced": False,
+        "home_symbol": "NVDA",
+    }
+
+    @r.get("/preferences")
+    def prefs():
+        rows = t.query("select payload from preferences where id=1")
+        return {**defaults, **(json.loads(rows[0]["payload"]) if rows else {})}
+
+    @r.patch("/preferences")
+    def save_prefs(item: Preferences):
+        updates = item.model_dump(exclude_none=True)
+        with db.connect() as c:
+            c.execute("begin immediate")
+            row = c.execute("select payload from preferences where id=1").fetchone()
+            result = {**defaults, **(json.loads(row[0]) if row else {}), **updates}
+            c.execute("insert or replace into preferences values(1,?)", (json.dumps(result),))
+        return result
+
+    @r.get("/openai/models")
+    def models(discover: bool = False):
+        return t.openai.models(discover)
+
+    @r.post("/openai/models")
+    def lookup_models(item: ModelLookup):
+        return t.openai.models(candidate=item.key)
+
+    @r.post("/assistant")
+    def assistant_plan(chat: assistant.Chat):
+        chat.symbol = ticker(chat.symbol)
+        return assistant.plan(t.openai, chat)
+
+    @r.post("/assistant/research/{symbol}")
+    def answer_question(symbol: str, item: assistant.Question):
+        t.openai.credentials()
+        assistant.reject_key(item.question)
+        return assistant.research_question(t.openai, t.desk.briefing(ticker(symbol)), item.question)
+
+    @r.get("/prices/imports")
+    def imports():
+        return [row for row in db.catalog() if row["source"] == "csv"]
+
+    @r.get("/prices/imports/{key}")
+    def imported_prices(key: str):
+        meta, raw = db.snapshot(key)
+        if meta["source"] != "csv":
+            raise ValueError("Select an imported price file.")
+        bars = [
+            {
+                "date": d.date().isoformat(),
+                "time": int(d.tz_localize("UTC").timestamp()),
+                "close": row["Adj Close"],
+                "raw_close": row["Close"],
+            }
+            for d, row in read_csv(raw).iterrows()
+        ]
+        return {
+            "symbol": meta["ticker"],
+            "bars": bars,
+            "as_of": meta["last"],
+            "source": "Imported file",
+            "currency": None,
+            "url": None,
+        }
 
     @r.get("/desk/chart/{symbol}")
     def chart(symbol: str, interval: str = "1d", span: str = "2y", refresh: bool = False):
@@ -323,6 +412,41 @@ def register(app, db):
         s = ticker(item.symbol)
         t.update("insert into watch_members values(?,?) on conflict do nothing", (key, s))
         return {"symbol": s}
+
+    @r.post("/watchlists/{key}/import")
+    def import_list(key: str, item: ListImport):
+        reader = csv.reader(io.StringIO(item.content.lstrip("\ufeff")))
+        rows = (row for row in reader if any(cell.strip() for cell in row))
+        first = next(rows, [])
+        head = [v.strip().casefold() for v in first]
+        col = next(
+            (i for i, v in enumerate(head) if v in {"ticker", "symbol", "ticker symbol"}), None
+        )
+        if col is None:
+            if len(first) != 1:
+                raise ValueError("Include a Symbol or Ticker column, or one ticker per line.")
+            col = 0
+            import itertools
+
+            rows = itertools.chain([first], rows)
+        symbols = set()
+        for row in rows:
+            if col >= len(row):
+                raise ValueError("A row is missing its symbol.")
+            symbols.add(ticker(row[col]))
+            if len(symbols) > 2000:
+                raise ValueError("Import up to 2,000 symbols at once.")
+        if not symbols:
+            raise ValueError("The file contains no symbols.")
+        with db.connect() as c:
+            c.execute("begin immediate")
+            if not c.execute("select 1 from watchlists where id=?", (key,)).fetchone():
+                raise KeyError("List not found.")
+            inserted = c.executemany(
+                "insert or ignore into watch_members values(?,?)",
+                [(key, s) for s in sorted(symbols)],
+            ).rowcount
+        return {"added": inserted, "existing": len(symbols) - inserted}
 
     @r.delete("/watchlists/{key}/symbols/{symbol}")
     def remove_symbol(key: str, symbol: str):

@@ -1,18 +1,8 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useState, useRef, type FormEvent } from 'react'
 import { Bell, Plus, Star, Trash2 } from 'lucide-react'
 import { api, errorText, pct } from './types'
 import { Field, Modal, ErrorBox, Empty } from './ui'
-import {
-  PageHead,
-  useResource,
-  FetchState,
-  PacketNote,
-  fmt,
-  when,
-  SourceLink,
-  type Packet,
-  type Navigate,
-} from './deskCommon'
+import { PageHead, useResource, PacketNote, fmt, type Packet, type Navigate } from './deskCommon'
 type List = { id: string; name: string; symbols: string[] }
 type Quote = {
   price: number
@@ -50,7 +40,7 @@ function QuoteRow({
   return (
     <tr>
       <td>
-        <button className="text-btn ticker" onClick={() => go('Charts', symbol)}>
+        <button className="text-btn ticker" onClick={() => go('Research', symbol)}>
           {symbol}
         </button>
       </td>
@@ -63,11 +53,8 @@ function QuoteRow({
       </td>
       <td>
         <div className="inline">
-          <button className="text-btn" onClick={() => go('Market research', symbol)}>
+          <button className="text-btn" onClick={() => go('Research', symbol)}>
             Research
-          </button>
-          <button className="text-btn" onClick={() => go('Investor ratings', symbol)}>
-            Ratings
           </button>
           <button
             className="icon-btn"
@@ -81,7 +68,19 @@ function QuoteRow({
     </tr>
   )
 }
-export function Watchlists({ go, symbol }: { go: Navigate; symbol: string }) {
+export function Watchlists({
+  go,
+  symbol,
+  importOnOpen = false,
+}: {
+  go: Navigate
+  symbol: string
+  importOnOpen?: boolean
+}) {
+  const file = useRef<HTMLInputElement>(null),
+    [importNote, report] = useState(''),
+    [importOpen, setImportOpen] = useState(importOnOpen)
+  useEffect(() => setImportOpen(importOnOpen), [importOnOpen])
   const ls = useResource<List[]>('/watchlists'),
     alerts = useResource<Alert[]>('/alerts'),
     [id, setId] = useState(''),
@@ -126,14 +125,18 @@ export function Watchlists({ go, symbol }: { go: Navigate; symbol: string }) {
     <>
       <PageHead
         title="Watchlists"
-        description="Follow public tickers and monitor price thresholds while StockReplay is running."
+        description="Track the stocks you follow and get alerts when they reach a price you choose."
       />
       <ErrorBox text={error || ls.error || alerts.error} />
       <section className="panel desk-card">
         <div className="desk-toolbar">
           <label className="field">
             <span>Watchlist</span>
-            <select value={list?.id || ''} onChange={(e) => setId(e.target.value)}>
+            <select
+              aria-label="Watchlist"
+              value={list?.id || ''}
+              onChange={(e) => setId(e.target.value)}
+            >
               {ls.data?.map((l) => (
                 <option key={l.id} value={l.id}>
                   {l.name}
@@ -191,10 +194,46 @@ export function Watchlists({ go, symbol }: { go: Navigate; symbol: string }) {
                 Refresh quotes
               </button>
             </div>
-            <p className="helper">
-              Quote requests send individual symbols to Yahoo Finance. List names and groupings stay
-              on this Mac.
-            </p>
+            <div className="import-watch">
+              <button className="text-btn" onClick={() => setImportOpen(!importOpen)}>
+                Import symbols
+              </button>
+              {importOpen && (
+                <div className="tip">
+                  <label className="field">
+                    <span>Watchlist CSV</span>
+                    <input
+                      ref={file}
+                      type="file"
+                      accept=".csv,.txt,text/csv,text/plain"
+                      onChange={async (e) => {
+                        const f = e.target.files?.[0]
+                        if (!f) return
+                        try {
+                          if (f.size > 1000000) throw Error('Choose a file smaller than 1 MB.')
+                          const result = await api<{ added: number; existing: number }>(
+                            '/watchlists/' + list.id + '/import',
+                            'POST',
+                            { content: await f.text() },
+                          )
+                          report(
+                            result.added + ' added, ' + result.existing + ' already on this list.',
+                          )
+                          ls.reload()
+                          setErr('')
+                        } catch (ex) {
+                          setErr(errorText(ex))
+                        } finally {
+                          if (file.current) file.current.value = ''
+                        }
+                      }}
+                    />
+                  </label>
+                  <small>Use a Symbol or Ticker column, or one ticker per line.</small>
+                </div>
+              )}
+              {importNote && <p role="status">{importNote}</p>}
+            </div>
             {list.symbols.length ? (
               <div className="table-wrap">
                 <table>
@@ -232,7 +271,7 @@ export function Watchlists({ go, symbol }: { go: Navigate; symbol: string }) {
             ) : (
               <Empty
                 title="No symbols in this watchlist"
-                body="Add a ticker or save a result from the market screener."
+                body="Add a ticker above, import a list, or save a stock from Research."
               />
             )}
             <details>
@@ -261,11 +300,10 @@ export function Watchlists({ go, symbol }: { go: Navigate; symbol: string }) {
           </>
         )}
       </section>
-      <section className="panel desk-card">
-        <h3>
-          <Bell size={16} />
-          Price alerts
-        </h3>
+      <details className="panel desk-card">
+        <summary>
+          <Bell size={16} /> Price alerts
+        </summary>
         <p>
           StockReplay checks the latest available five-minute price approximately every two minutes
           while the service is running. Alerts display here when an observed price reaches the
@@ -346,7 +384,7 @@ export function Watchlists({ go, symbol }: { go: Navigate; symbol: string }) {
         >
           {busy ? 'Checking…' : 'Check alerts now'}
         </button>
-      </section>
+      </details>
       {deleting && list && (
         <Modal title={'Delete ' + list.name + '?'} close={() => del(false)}>
           <div className="modal-body stack">
@@ -363,194 +401,6 @@ export function Watchlists({ go, symbol }: { go: Navigate; symbol: string }) {
           </div>
         </Modal>
       )}
-    </>
-  )
-}
-type ScreenQuote = {
-  symbol: string
-  shortName: string | null
-  longName: string | null
-  regularMarketPrice: number | null
-  regularMarketChangePercent: number | null
-  regularMarketVolume: number | null
-  marketCap: number | null
-  regularMarketTime: number | null
-  currency: string | null
-  fullExchangeName: string | null
-}
-const screens: Record<string, string> = {
-  most_actives: 'Most active',
-  day_gainers: 'Day gainers',
-  day_losers: 'Day losers',
-  growth_technology_stocks: 'Growth technology',
-  undervalued_large_caps: 'Undervalued large caps',
-  aggressive_small_caps: 'Aggressive small caps',
-}
-export function Screener({ go }: { go: Navigate }) {
-  const [screen, setScreen] = useState('most_actives'),
-    [term, setTerm] = useState(''),
-    [sort, setSort] = useState('regularMarketVolume'),
-    [asc, setAsc] = useState(false),
-    [min, setMin] = useState(''),
-    [cap, setCap] = useState(''),
-    [id, setId] = useState(''),
-    [note, setNote] = useState('')
-  const res = useResource<Packet<ScreenQuote[]>>('/desk/screener?screen_name=' + screen),
-    lists = useResource<List[]>('/watchlists')
-  const chosen = id || lists.data?.[0]?.id
-  const rows = (res.data?.data || [])
-    .filter(
-      (v) =>
-        (v.symbol + ' ' + v.shortName + ' ' + v.longName)
-          .toLowerCase()
-          .includes(term.toLowerCase()) &&
-        (!min || (v.regularMarketPrice != null && v.regularMarketPrice >= Number(min))) &&
-        (!cap || (v.marketCap != null && v.marketCap >= Number(cap) * 1e9)),
-    )
-    .sort((a, b) => {
-      const field = sort as keyof ScreenQuote,
-        x = a[field],
-        y = b[field]
-      if (x == null) return y == null ? 0 : 1
-      if (y == null) return -1
-      return (asc ? 1 : -1) * (typeof x === 'string' ? x.localeCompare(String(y)) : x - Number(y))
-    })
-  return (
-    <>
-      <PageHead
-        title="Market screener"
-        description="Screen up to 100 current quotes from each Yahoo Finance market screen."
-      />
-      <section className="panel desk-card">
-        <div className="desk-toolbar">
-          <Field name="Market screen">
-            <select value={screen} onChange={(e) => setScreen(e.target.value)}>
-              {Object.entries(screens).map(([k, v]) => (
-                <option value={k} key={k}>
-                  {v}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field name="Company or ticker">
-            <input value={term} onChange={(e) => setTerm(e.target.value)} />
-          </Field>
-          <Field name="Minimum price">
-            <input type="number" min="0" value={min} onChange={(e) => setMin(e.target.value)} />
-          </Field>
-          <Field name="Minimum market cap (billions)">
-            <input type="number" min="0" value={cap} onChange={(e) => setCap(e.target.value)} />
-          </Field>
-          <button className="btn" disabled={res.loading} onClick={() => res.reload(true)}>
-            Refresh screen
-          </button>
-        </div>
-        <FetchState {...res} />
-        {res.data && (
-          <>
-            <PacketNote p={res.data} />
-            <div className="desk-toolbar">
-              <small>
-                {rows.length} matches · retrieved{' '}
-                {res.data.fetched ? new Date(res.data.fetched).toLocaleString() : '—'}
-              </small>
-              <Field name="Save symbols to">
-                <select value={chosen || ''} onChange={(e) => setId(e.target.value)}>
-                  {lists.data?.map((l) => (
-                    <option key={l.id} value={l.id}>
-                      {l.name}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-            </div>
-            <p role="status">{note}</p>
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    {Object.entries({
-                      symbol: 'Ticker',
-                      shortName: 'Company',
-                      regularMarketPrice: 'Price',
-                      regularMarketChangePercent: 'Change',
-                      regularMarketVolume: 'Volume',
-                      marketCap: 'Market cap',
-                      regularMarketTime: 'Quote date',
-                    }).map(([k, v]) => (
-                      <th key={k}>
-                        <button
-                          className="text-btn"
-                          onClick={() => {
-                            setAsc(k === sort ? !asc : k === 'symbol' || k === 'shortName')
-                            setSort(k)
-                          }}
-                        >
-                          {v}
-                          {k === sort ? (asc ? ' ↑' : ' ↓') : ''}
-                        </button>
-                      </th>
-                    ))}
-                    <th>Watch</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((q) => (
-                    <tr key={q.symbol}>
-                      <td>
-                        <button className="text-btn ticker" onClick={() => go('Charts', q.symbol)}>
-                          {q.symbol}
-                        </button>
-                      </td>
-                      <td>
-                        <button
-                          className="text-btn"
-                          onClick={() => go('Market research', q.symbol)}
-                        >
-                          {q.shortName || q.longName || '—'}
-                        </button>
-                      </td>
-                      <td>
-                        {fmt(q.regularMarketPrice)} {q.currency}
-                      </td>
-                      <td>{pct(q.regularMarketChangePercent)}</td>
-                      <td>{fmt(q.regularMarketVolume, 0)}</td>
-                      <td>{fmt(q.marketCap, 0)}</td>
-                      <td>
-                        {q.regularMarketTime
-                          ? when(new Date(q.regularMarketTime * 1000).toISOString())
-                          : '—'}
-                      </td>
-                      <td>
-                        <button
-                          className="icon-btn"
-                          disabled={!chosen}
-                          aria-label={'Watch ' + q.symbol}
-                          onClick={async () => {
-                            try {
-                              await api('/watchlists/' + chosen + '/symbols', 'POST', {
-                                symbol: q.symbol,
-                              })
-                              setNote(q.symbol + ' saved to the watchlist.')
-                            } catch (e) {
-                              setNote(errorText(e))
-                            }
-                          }}
-                        >
-                          <Star size={14} />
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <SourceLink url="https://finance.yahoo.com/markets/stocks/">
-              Yahoo Finance markets
-            </SourceLink>
-          </>
-        )}
-      </section>
     </>
   )
 }

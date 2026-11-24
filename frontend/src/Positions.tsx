@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { Building2, FileUp, Plus, Pencil, Trash2 } from 'lucide-react'
 import { api, errorText } from './types'
 import { Modal, Field, Empty, ErrorBox, Busy } from './ui'
@@ -331,7 +331,7 @@ function PositionForm({
     </Modal>
   )
 }
-export function HoldingsPage() {
+export function HoldingsPage({ initialAction = '' }: { initialAction?: string }) {
   const data = useResource<Account[]>('/holdings'),
     [importing, setImport] = useState(false),
     [adding, setAdding] = useState(false),
@@ -340,6 +340,10 @@ export function HoldingsPage() {
     [remove, setRemove] = useState<{ url: string; title: string } | null>(null),
     [marks, setMarks] = useState<Record<string, string>>({}),
     [message, show] = useState('')
+  useEffect(() => {
+    if (initialAction === 'holdings') setImport(true)
+    if (initialAction === 'account') setAdding(true)
+  }, [initialAction])
   const all = (data.data || []).flatMap((a) => a.positions),
     missing = all.filter((p) => p.value == null).length
   const saved = () => {
@@ -392,8 +396,8 @@ export function HoldingsPage() {
   return (
     <>
       <PageHead
-        title="Holdings"
-        description="Your brokerage positions and bank balances are stored in SQLite on this Mac."
+        title="Portfolio"
+        description="Keep your investments and bank balances together on this Mac."
       >
         <button className="btn primary" onClick={() => setImport(true)}>
           <FileUp size={15} />

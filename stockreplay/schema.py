@@ -111,25 +111,6 @@ class RunRequest(Model):
     pins: dict[Symbol, Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")]] | None = None
 
 
-class InterpretationRequest(Model):
-    question: str = Field(min_length=4, max_length=2000)
-    config: Experiment
-
-
-class Interpretation(Model):
-    status: Literal["ready", "clarify", "unsupported"]
-    message: str = Field(max_length=1000)
-    config: Experiment | None = None
-
-    @model_validator(mode="after")
-    def valid(self):
-        if (self.config is not None) != (self.status == "ready"):
-            raise ValueError("Only a ready interpretation contains a configuration.")
-        if self.status != "ready" and not self.message.strip():
-            raise ValueError("Explain which input is missing.")
-        return self
-
-
 class RobustnessRequest(RunRequest):
     thresholds: list[float] = Field(min_length=1, max_length=5)
     holdings: list[Annotated[int, Field(ge=1, le=252)]] = Field(min_length=1, max_length=5)
@@ -150,10 +131,6 @@ class NoteEdit(Model):
     run_id: str | None = Field(default=None, pattern=r"^[a-f0-9]{32}$")
     name: str = Field(min_length=1, max_length=100)
     notes: str = Field(max_length=12000)
-
-
-class Settings(Model):
-    model: str = Field(min_length=1, max_length=120, pattern=r"^[a-zA-Z0-9][a-zA-Z0-9_./:-]*$")
 
 
 class CsvUpload(Model):

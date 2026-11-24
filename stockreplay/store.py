@@ -149,15 +149,6 @@ class Store:
             if not db.execute("delete from library where id=?", (key,)).rowcount:
                 raise KeyError("Saved experiment not found.")
 
-    def model(self):
-        with self.connect() as db:
-            row = db.execute("select model from settings where id=1").fetchone()
-        return row[0] if row else os.environ.get("STOCKREPLAY_MODEL", "qwen2.5:7b")
-
-    def set_model(self, model):
-        with self.connect() as db:
-            db.execute("insert or replace into settings values(1,?)", (model,))
-
     def add_comparison(self, name, data):
         key = uuid.uuid4().hex
         with self.connect() as db:

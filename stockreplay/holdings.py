@@ -5,7 +5,6 @@ import hashlib
 import hmac
 import io
 import json
-import re
 import secrets
 from datetime import date
 from decimal import Decimal, InvalidOperation

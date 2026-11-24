@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 import json
 from threading import Lock
+import httpx
 
 from .store import encode, now
 
@@ -55,7 +56,16 @@ class PublicCache:
                 return {"data": data, "fetched": stamp, "stale": False, "error": None}
             except Exception as exc:
                 # Sources are independent; retain their last observed timestamp on failure.
-                msg = str(exc)[:220] or "Provider unavailable"
+                if isinstance(exc, httpx.HTTPStatusError):
+                    msg = (
+                        "The publisher is currently limiting access."
+                        if exc.response.status_code in (403, 429)
+                        else "The publisher has no available response for this symbol."
+                    )
+                elif isinstance(exc, ValueError):
+                    msg = str(exc).splitlines()[0][:160] or "No published data available."
+                else:
+                    msg = "The publisher could not be reached."
                 return {
                     **(old or {"data": None, "fetched": None}),
                     "stale": bool(old),

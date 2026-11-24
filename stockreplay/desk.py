@@ -4,6 +4,8 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone, timedelta
 import hashlib
 import math
+import re
+from statistics import stdev
 from urllib.parse import quote, urlsplit
 from xml.etree import ElementTree as ET
 
@@ -164,6 +166,11 @@ def company(symbol):
         "earningsTimestamp",
         "earningsTimestampEnd",
         "quoteType",
+        "forwardEps",
+        "beta",
+        "overallRisk",
+        "governanceEpochDate",
+        "recommendationKey",
         "targetLowPrice",
         "targetMeanPrice",
         "targetHighPrice",
@@ -266,23 +273,56 @@ def consensus(symbol):
     ]
 
 
-def nasdaq(symbol):
-    data = (
-        fetch_url("https://api.nasdaq.com/api/analyst/" + quote(symbol, safe="") + "/ratings")
-        .json()
-        .get("data")
-        or {}
+def forecast(symbol):
+    url = "https://stockanalysis.com/stocks/" + quote(symbol.lower(), safe="") + "/forecast/"
+    soup = BeautifulSoup(fetch_url(url).content, "html.parser")
+    heading = next(
+        (h for h in soup.select("h2,h3") if "Stock Price Forecast" in h.get_text(" ", strip=True)),
+        None,
     )
-    if not data.get("meanRatingType"):
-        raise ValueError("Nasdaq publishes no consensus for this symbol.")
+    paragraph = heading.find_next("p") if heading else None
+    summary = paragraph.get_text(" ", strip=True) if paragraph else ""
+    grade = re.search(r'consensus rating of [“"]([^”"]+)', summary, re.I)
+    count = re.search(r"([\d,]+) analysts?", summary, re.I)
+    if not grade:
+        raise ValueError("No published Stock Analysis forecast for this symbol.")
+    targets, votes, period = {}, {}, None
+    for table in soup.find_all("table"):
+        headers = [
+            cell.get_text(" ", strip=True) for cell in table.select("thead tr:last-child th")
+        ]
+        for row in table.select("tbody tr"):
+            cells = [
+                c.get_text(" ", strip=True) for c in row.find_all(["td", "th"], recursive=False)
+            ]
+            if not cells or len(cells) != len(headers):
+                continue
+            if cells[0] == "Price" and "Average" in headers:
+                for label, value in zip(headers[1:], cells[1:]):
+                    n = number(re.sub(r"[^0-9.\-]", "", value))
+                    if n is not None:
+                        targets[label.lower()] = n
+            elif (
+                cells[0] in {"Strong Buy", "Buy", "Hold", "Sell", "Strong Sell"}
+                and number(cells[-1]) is not None
+            ):
+                votes[cells[0]] = int(float(cells[-1]))
+                period = headers[-1]
     return {
-        "grade": data["meanRatingType"],
-        "summary": data.get("ratingsSummary"),
-        "contributors": data.get("brokerNames") or [],
-        "url": "https://www.nasdaq.com/market-activity/stocks/"
-        + symbol.lower()
-        + "/analyst-research",
+        "grade": grade.group(1),
+        "count": int(count[1].replace(",", "")) if count else None,
+        "summary": summary,
+        "targets": targets,
+        "votes": votes,
+        "period": period,
+        "url": url,
+        "source": "Stock Analysis",
+        "provider": "S&P Global" if "S&P Global" in summary else None,
     }
+
+
+def excerpt(value):
+    return " ".join(BeautifulSoup(str(value or ""), "html.parser").stripped_strings)[:480]
 
 
 def published(value):
@@ -306,6 +346,7 @@ def rss(url, category):
             out.append(
                 {
                     "title": title,
+                    "excerpt": excerpt(item.findtext("description")),
                     "url": link,
                     "published": stamp,
                     "publisher": "Federal Reserve"
@@ -333,6 +374,7 @@ def stories(symbol, category):
                 out.append(
                     {
                         "title": c["title"],
+                        "excerpt": excerpt(c.get("summary") or c.get("description")),
                         "url": url,
                         "published": stamp,
                         "publisher": (c.get("provider") or {}).get("displayName")
@@ -455,8 +497,8 @@ class Desk:
             "consensus": lambda: self.cache.get(
                 "consensus:" + symbol, 3600, lambda: consensus(symbol), refresh
             ),
-            "nasdaq": lambda: self.cache.get(
-                "nasdaq:" + symbol, 21600, lambda: nasdaq(symbol), refresh
+            "forecast": lambda: self.cache.get(
+                "forecast:" + symbol, 21600, lambda: forecast(symbol), refresh
             ),
             "profile": lambda: self.cache.get(
                 "profile:" + symbol, 3600, lambda: company(symbol), refresh
@@ -500,7 +542,7 @@ class Desk:
         v = parallel(tasks)
         evidence = []
 
-        def add(group, text, url, date, source):
+        def add(group, text, url, date, source, excerpt=None):
             key = hashlib.sha256((group + str(url) + str(date) + text).encode()).hexdigest()[:14]
             evidence.append(
                 {
@@ -510,6 +552,7 @@ class Desk:
                     "url": url,
                     "date": date,
                     "source": source,
+                    "excerpt": excerpt,
                 }
             )
 
@@ -546,15 +589,6 @@ class Desk:
                     "percentage points" if unit == "%" else unit
                 )
             add("market", text, indicator["url"], last["date"], "Yahoo Finance")
-        if r["stockreplay"]:
-            own = r["stockreplay"]
-            add(
-                "technical",
-                f"StockReplay technical score {own['score']}/100 ({own['label']})",
-                YAHOO + quote(symbol) + "/history/",
-                own["as_of"],
-                "StockReplay calculation",
-            )
         c = r["consensus"]
         current = next((x for x in c["data"] or [] if x["period"] == "0m"), None)
         if current:
@@ -570,15 +604,115 @@ class Desk:
                 c["fetched"],
                 "Yahoo Finance · retrieved",
             )
-        n = r["nasdaq"]
+        n = r["forecast"]
         if n["data"]:
             add(
                 "analysts",
                 str(n["data"]["grade"]) + ". " + str(n["data"]["summary"] or ""),
                 n["data"]["url"],
                 n["fetched"],
-                "Nasdaq · retrieved",
+                "Stock Analysis · retrieved",
             )
+        profile_stamp = r["profile"]["fetched"]
+        analysis_url = YAHOO + quote(symbol) + "/analysis/"
+        metrics = []
+
+        def metric(group, label, value, unit, url, stamp, source="Yahoo Finance"):
+            value = number(value)
+            if value is None or not stamp:
+                return
+            metrics.append(
+                {
+                    "group": group,
+                    "label": label,
+                    "value": round(value, 2),
+                    "unit": unit,
+                    "url": url,
+                    "date": stamp,
+                    "source": source,
+                }
+            )
+            add(group, f"{label}: {value:,.2f} {unit}".strip(), url, stamp, source)
+
+        currency = profile.get("currency") or ""
+        for key, label, unit in [
+            ("targetMeanPrice", "Average analyst target", currency),
+            ("targetLowPrice", "Low analyst target", currency),
+            ("targetHighPrice", "High analyst target", currency),
+            ("forwardEps", "Estimated earnings per share", currency),
+        ]:
+            metric("estimates", label, profile.get(key), unit, analysis_url, profile_stamp)
+        metric(
+            "fundamentals",
+            "Forward price / earnings",
+            profile.get("forwardPE"),
+            "×",
+            YAHOO + quote(symbol) + "/key-statistics/",
+            profile_stamp,
+        )
+        metric(
+            "risk",
+            "Five-year beta",
+            profile.get("beta"),
+            "×",
+            YAHOO + quote(symbol) + "/key-statistics/",
+            profile_stamp,
+        )
+        gov = profile.get("governanceEpochDate")
+        gov_date = (
+            datetime.fromtimestamp(gov, timezone.utc).date().isoformat()
+            if isinstance(gov, (int, float)) and 0 < gov < 4102444800
+            else profile_stamp
+        )
+        metric(
+            "risk",
+            "ISS governance risk (1 low, 10 high)",
+            profile.get("overallRisk"),
+            "/ 10",
+            YAHOO + quote(symbol) + "/profile/",
+            gov_date,
+        )
+        series = r["chart"]["data"]
+        if series:
+            bars = series["bars"][-253:]
+            if len(bars) >= 21:
+                returns = [math.log(b["close"] / a["close"]) for a, b in zip(bars, bars[1:])]
+                peak = bars[0]["close"]
+                drawdown = 0
+                for bar in bars:
+                    peak = max(peak, bar["close"])
+                    drawdown = min(drawdown, bar["close"] / peak - 1)
+                label = f"{len(returns)}-session"
+                metric(
+                    "risk",
+                    label + " annualized volatility",
+                    stdev(returns) * math.sqrt(252) * 100,
+                    "%",
+                    series["url"],
+                    bars[-1]["date"],
+                    "StockReplay · Yahoo Finance prices",
+                )
+                metric(
+                    "risk",
+                    label + " maximum drawdown",
+                    drawdown * 100,
+                    "%",
+                    series["url"],
+                    bars[-1]["date"],
+                    "StockReplay · Yahoo Finance prices",
+                )
+        if n["data"]:
+            f = n["data"]
+            for label in ("low", "average", "high"):
+                metric(
+                    "estimates",
+                    "Analyst target (" + label + ")",
+                    f["targets"].get(label),
+                    currency,
+                    f["url"],
+                    n["fetched"],
+                    "Stock Analysis",
+                )
         for x in sorted(
             (r["actions"]["data"] or [])[:5] + (r["stockanalysis"]["data"] or [])[:5],
             key=lambda x: x["date"],
@@ -606,6 +740,7 @@ class Desk:
                     item["url"],
                     item["published"],
                     item["publisher"],
+                    item.get("excerpt"),
                 )
         issues = [
             f"{key.replace('_', ' ')}: {value['error']}"
@@ -620,7 +755,7 @@ class Desk:
                         "actions",
                         "stockanalysis",
                         "consensus",
-                        "nasdaq",
+                        "forecast",
                     )
                 },
             }.items()
@@ -647,6 +782,21 @@ class Desk:
             "rating": r["stockreplay"],
             "fundamentals": profile,
             "profile_fetched": r["profile"]["fetched"],
+            "metrics": metrics,
+            "public_ratings": {
+                "forecast": n["data"],
+                "forecast_fetched": n["fetched"],
+                "consensus": current,
+                "consensus_fetched": c["fetched"],
+                "consensus_url": analysis_url,
+                "consensus_grade": profile.get("recommendationKey"),
+            },
+            "analyst_actions": sorted(
+                (r["actions"]["data"] or []) + (r["stockanalysis"]["data"] or []),
+                key=lambda row: row["date"],
+                reverse=True,
+            ),
+            "price_as_of": series["as_of"] if series else None,
             "evidence": evidence,
             "issues": issues,
             "current_prices": fresh_series(r["chart"]),

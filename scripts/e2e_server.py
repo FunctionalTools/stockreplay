@@ -1,9 +1,10 @@
-"""Run browser tests against an isolated temporary SQLite database."""
+"""Run browser tests against a separate temporary account and intercepted OpenAI transport."""
 
 import os
 import sys
 import tempfile
 from pathlib import Path
+import httpx
 import uvicorn
 
 root = Path(__file__).resolve().parents[1]
@@ -11,17 +12,11 @@ sys.path.insert(0, str(root))
 os.chdir(root)
 with tempfile.TemporaryDirectory(prefix="stockreplay-browser-") as state:
     os.environ["STOCKREPLAY_HOME"] = state
-    from stockreplay.api import create_app, opening_config
+    from stockreplay.api import create_app
+    from tests.provider_fixture import install_market, respond
 
-    app = create_app()
     if os.getenv("STOCKREPLAY_LIVE_TESTS") != "1":
-        from tests.fixture_market import seed
-
-        initial = seed(app.state.store)
-        app.dependency_overrides[opening_config] = lambda: initial
-    uvicorn.run(
-        app,
-        host="127.0.0.1",
-        port=int(sys.argv[1]),
-        log_level="warning",
-    )
+        install_market()
+    app = create_app()
+    app.state.terminal.openai.transport = httpx.MockTransport(respond)
+    uvicorn.run(app, host="127.0.0.1", port=int(sys.argv[1]), log_level="warning")

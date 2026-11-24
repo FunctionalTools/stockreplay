@@ -4,7 +4,7 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-from stockreplay import ai, market
+from stockreplay import market
 from stockreplay.api import create_app, opening_config
 from tests.fixture_market import seed
 from stockreplay.robustness import evaluate_robustness
@@ -79,28 +79,16 @@ def set_test_opening(client):
     client.app.dependency_overrides[opening_config] = lambda: config
 
 
-def test_opening_jobs_and_offline_ai(client, monkeypatch):
+def test_archived_opening_and_jobs(client):
     set_test_opening(client)
     r = client.get("/api/opening").json()
     assert r["config"]["source"] == "csv" and r["metrics"]["count"] > 0
     assert client.get("/api/opening").json()["id"] == r["id"]
 
-    def down(*args):
-        raise ai.AIUnavailable("offline")
-
-    monkeypatch.setattr(ai, "chat", down)
-    assert (
-        client.post(
-            "/api/interpret",
-            json={"config": r["config"], "question": "Test this question"},
-        ).status_code
-        == 503
-    )
-    assert client.post("/api/runs/" + r["id"] + "/explain").status_code == 503
     assert run(client, r["config"])["metrics"] == r["metrics"]
 
 
-def test_error_paths_and_settings(client, config, monkeypatch):
+def test_error_paths_and_settings(client, config):
     assert client.post("/api/jobs", json={"config": {"holding": 0}}).status_code == 422
     assert (
         client.post(
@@ -115,13 +103,10 @@ def test_error_paths_and_settings(client, config, monkeypatch):
     )
     assert client.get("/api/symbols?q=NVIDIA").json()[0]["symbol"] == "NVDA"
     assert client.get("/api/jobs/absent").status_code == 404
-    monkeypatch.setattr(
-        ai,
-        "status",
-        lambda m: {"model": m, "online": False, "ready": False, "models": []},
+    assert (
+        client.patch("/api/preferences", json={"appearance": "dark"}).json()["appearance"] == "dark"
     )
-    assert client.put("/api/settings", json={"model": "local:v1"}).json()["model"] == "local:v1"
-    assert client.get("/api/ai").json()["model"] == "local:v1"
+    assert client.get("/api/preferences").json()["appearance"] == "dark"
     assert (
         client.post("/api/jobs", json={}, headers={"origin": "https://other.example"}).status_code
         == 403
@@ -182,21 +167,3 @@ def test_real_yahoo_and_cached_replay(client, monkeypatch):
 
     monkeypatch.setattr(market, "yahoo", no_network)
     assert run(client, r["config"])["metrics"] == r["metrics"]
-
-
-def test_changed_robustness_invalidates_inflight_explanation(client, monkeypatch):
-    set_test_opening(client)
-    r = client.get("/api/opening").json()
-    db = client.app.state.store
-
-    def changed(*args):
-        with db.connect() as conn:
-            conn.execute(
-                "insert into research(run_id,robustness) values(?,?)",
-                (r["id"], '{"cells":[]}'),
-            )
-        return {"origin": "ollama", "model": "local", "sections": []}
-
-    monkeypatch.setattr(ai, "explain", changed)
-    assert client.post("/api/runs/" + r["id"] + "/explain").status_code == 409
-    assert "explanation" not in client.get("/api/runs/" + r["id"]).json()

@@ -1,4 +1,6 @@
-# Statistical methodology
+# Archived event-study methodology
+
+This describes the historical event-study engine used by saved runs. Current stock assessments use public evidence and independent buy and risk scores. [Current research methodology](DATA.md)
 
 ## Clock, universe and prices
 
