@@ -1,0 +1,14 @@
+.venv/
+.local/
+.stockreplay/
+__pycache__/
+.pytest_cache/
+*.py[cod]
+node_modules/
+dist/
+test-results/
+playwright-report/
+*.sqlite*
+.DS_Store
+.env
+.ruff_cache/
