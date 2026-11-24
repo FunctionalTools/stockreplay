@@ -190,3 +190,30 @@ def test_named_signal_asset_and_unrelated_lookback():
     assert "holding" not in literals(
         "Does Apple gain after NVDA drops more than 4% over five sessions?"
     )
+
+
+def test_single_explicit_trigger_ignores_spurious_model_conditions(monkeypatch):
+    raw = ready()
+    raw.update(tickers=["MSFT"], objective="outperform", start="2021-01-04", end="2024-12-31")
+    raw["entry"]["rules"] = [
+        {"indicator": "relative_return", "ticker": "ASSET", "operator": "gt", "value": 0},
+        {"indicator": "daily_return", "ticker": "ASSET", "operator": "lt", "value": -8},
+    ]
+    monkeypatch.setattr(ai, "chat", lambda *args: json.dumps(raw))
+    base = Experiment()
+    q = "Does Microsoft outperform the S&P 500 in the three days after NVIDIA falls more than 4%?"
+    config = ai.interpret(InterpretationRequest(question=q, config=base), "local").config
+    assert (
+        len(config.entry.rules) == 1
+        and config.entry.rules[0].ticker == "NVDA"
+        and config.entry.rules[0].value == -4
+    )
+    assert (config.start, config.end) == (base.start, base.end)
+    from stockreplay.language import sole_daily_trigger
+
+    assert (
+        sole_daily_trigger(
+            "Does AAPL gain after NVIDIA falls more than 4% on high volume?", ["AAPL"]
+        )
+        is None
+    )

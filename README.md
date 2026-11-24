@@ -1,12 +1,10 @@
-# StockReplay
+# StockReplay for macOS
 
-StockReplay is a local market research laboratory. Write an investment hypothesis, review the rules inferred by Ollama, and run them against historical daily prices. The Python engine calculates every observation, return and confidence interval. Each experiment keeps the exact data snapshots used in the calculation.
+StockReplay runs a market research website on your Mac. The opening workbench tests a five-session NVIDIA hypothesis against real Yahoo Finance history. Its three-year window advances to the latest completed US trading session, including exchange holidays and early closes. The page displays the source and actual observation dates.
 
-![StockReplay workbench showing a five-session NVIDIA event study on the explicitly labeled synthetic dataset](docs/screenshots/workbench.png)
+![StockReplay workbench with real NVIDIA and SPY market history](docs/screenshots/workbench.png)
 
-## Launch
-
-On macOS or Linux, run the following in a terminal.
+## Launch on a Mac
 
 ```bash
 git clone https://github.com/FunctionalTools/stockreplay.git
@@ -15,51 +13,44 @@ cd stockreplay
 ./start.sh
 ```
 
-The launcher opens **http://127.0.0.1:8765**. If the port is occupied, use the address printed by the launcher. Run `./stop.sh` to stop the services started by this checkout. First setup downloads dependencies and a local model. Cached experiments, imports, reports and the builder work offline. No account or API key is required.
+You can also double-click **StockReplay.command** in Finder. It runs setup on the first launch. The app opens at **http://127.0.0.1:8765** or the next free port printed in Terminal. Use `./stop.sh` to stop this checkout’s services.
 
-## Run a real-data experiment
+To update an existing checkout, run `./stop.sh`, `git pull --ff-only origin main`, `./setup.sh` and `./start.sh`. Your local database stays in `.stockreplay/`. For a lightweight installation using OpenAI or the visual builder, run `STOCKREPLAY_SKIP_AI=1 ./setup.sh` to skip the optional Ollama download.
 
-1. Choose **New experiment**. The data source defaults to **Yahoo Finance**. The opening workbench is a separate, labeled synthetic example.
-2. Enter “Does NVIDIA have a positive five-session return after a daily loss greater than 3%?” and choose **Interpret**.
-3. Inspect the traded ticker, benchmark, dates, signed entry threshold, holding period and costs. Edit them in the builder. Choose **Run experiment**.
-4. Inspect **Research results**. The price chart exposes adjusted daily candles, the event path shows the matched benchmark, and **Distribution** shows net returns. A portfolio backtest plots daily equity.
-5. Open **Counterexamples** and inspect an individual observation. The chart marks its signal, entry and exit. Failed outcomes stay in the event table and exports.
-6. Open **Robustness lab** and run the sensitivity grid. Compare in-sample results with holdout performance and expanding-window folds.
-7. Choose **Save experiment** to add a name and notes. **Export** offers HTML, event CSV, configuration JSON, and a portable experiment containing the original data. Import that file from **Research library** to reproduce the run offline.
+## Research a stock
 
-The builder works independently of Ollama. The initial synthetic study also provides a reproducible demonstration with no provider request. On the bundled data, its default settings produce **108 events** and a **+1.03% mean net return**. These numbers describe the generated series.
+1. Open **Market research**, enter a ticker and choose **Open symbol**. Review company and sector headlines, broad-market concerns, Federal Reserve releases, historical returns and analyst evidence. Each item identifies a publisher, date and source link.
+2. In **Settings → OpenAI API**, enter your API project key. Choose session-only storage or macOS Keychain, then choose **Test OpenAI connection**. The model must support the Responses API and structured outputs. The default is `gpt-4.1-mini`.
+3. Return to **Market research → Generate recommendation** for a directional view, time horizon, catalysts, risks and conditions that would change the view. Each claim links to its evidence. Saved recommendations can be reopened on this Mac without another API call. Generation requires current price and sector coverage and a funded API account. OpenAI receives only the selected ticker’s public evidence when you request a recommendation.
+4. Open **Investor ratings** for Yahoo analyst actions, Yahoo monthly recommendation counts, Nasdaq consensus and contributing firms, Stock Analysis named-analyst ratings, and StockReplay’s technical score. Filter the full history returned by the sources or add a separately published rating with a dated URL. The score shows each factor’s contribution and observation date.
 
-## Supported research
+The sources have different coverage and update schedules. A firm may appear in several publications. Some ratings and full analyst reports require subscriptions. Public-source failures and cached responses are labeled. [Data sources and rating methodology](docs/DATA.md)
 
-| Area | Capabilities |
+## Markets and portfolios
+
+| Page | What you can do |
 | --- | --- |
-| Signals | Daily and cumulative return, streaks, SMA distance and crossovers, Cutler RSI, volume and relative volume, volatility, drawdown, benchmark-relative returns, and cross-stock triggers |
-| Execution | Event studies with overlapping observations, long-only portfolio backtests with cash and equal starting allocations, close-based signals, next-open entry, fixed or conditional exits, commission and slippage |
-| Inference | Event counts, mean and median returns, outcome frequency, paired benchmark returns, worst and best observations, time-block bootstrap intervals and p-values |
-| Robustness | Threshold and holding-period heatmaps, cost sensitivity, adjustable assets, date ranges and regimes, chronological holdouts, expanding walk-forward selection |
-| Data | Yahoo Finance via yfinance, explicit CSV import/export, dividends and splits, adjusted OHLC, US session coverage checks, immutable price snapshots and offline replay |
-| Research library | Save, rename, duplicate, revise, rerun, compare and delete saved work. Comparison reports and notes persist in SQLite |
-| Exports | PNG candlesticks, SVG performance and distribution charts, CSV, JSON, portable snapshots and self-contained HTML |
+| Charts | Explore minute through monthly bars, candles, OHLC, lines, areas, volume, SMA, EMA, Bollinger bands, RSI, MACD and corporate actions. Compare symbols, draw levels and trend lines, replay history, save local layouts and export a PNG. |
+| Market screener | Browse six Yahoo screens, filter by name, price and capitalization, sort results, and add symbols to a watchlist. Quote dates appear with the results. |
+| Watchlists | Create, rename and delete local lists. Follow symbols, open charts or ratings, and create threshold alerts checked while the app is running. |
+| Holdings | Preview Fidelity positions CSVs, mapped CSVs from other institutions, and OFX/QFX investment positions or bank ledger balances. Add and edit accounts or positions manually. View statement totals separately by currency. |
+| TradingView tools | Explicitly load a separate TradingView frame for advanced charting, screeners, stock/ETF/crypto heatmaps, economic calendars, technical gauges, news, financials and profiles. Full Supercharts opens on TradingView for Pine Script, paper trading, broker connections, social features and subscription feeds. |
 
-### Example hypotheses
+### Add Fidelity or another account
 
-- Does Microsoft outperform SPY over the next three sessions after NVIDIA drops more than 4% in one session?
-- Does Apple outperform SPY over five trading sessions after three consecutive daily losses?
-- Do NVDA’s next five sessions have positive returns when volume exceeds twice its previous 20-session average?
-- For a portfolio split between AAPL and MSFT, what happens when the 20-session SMA crosses above the 50-session SMA and each position is held for ten sessions?
+In Fidelity **Positions**, download your current positions as CSV. Open **Holdings → Import statement**, choose the file and review the account names, position counts, currencies, values and any replacement of existing records. Select **Apply reviewed statement**. Reimport when you want to update the snapshot. For a CSV without account identifiers, use the same institution and nickname on later imports. The column-mapping panel accepts a broker’s exact headers. [Fidelity’s positions guide](https://www.fidelity.com/webxpress/help/topics/learn_portfolio_positions.shtml)
 
-A full recovery, a positive net return and benchmark outperformance are different objectives. Review the interpreted objective before execution. Questions requiring earnings, headlines, intraday bars or a point-in-time sector membership dataset need additional data.
+Holdings, quantities, basis, account names, watchlists, notes and layouts are stored on-device. StockReplay keeps a keyed local account identifier and the last four characters of imported account numbers. Raw statements remain outside the database. Requesting a quote sends the individual ticker to Yahoo. OpenAI keys can be forgotten in Settings. [Local storage and external connections](docs/ARCHITECTURE.md)
 
-## Documentation
+## Test a hypothesis
 
-- [Installation, model selection and troubleshooting](docs/INSTALLATION.md)
-- [System architecture and persistence](docs/ARCHITECTURE.md)
-- [Statistical methodology and limitations](docs/METHODOLOGY.md)
-- [Market data, attribution and third-party notices](docs/DATA.md)
-- [Build and verification record](BUILD_LOG.md)
-- [Counterexample inspection](docs/screenshots/counterexample.png) · [Robustness lab](docs/screenshots/robustness.png) · [Mobile workbench](docs/screenshots/mobile.png)
+Enter a question such as “Does NVIDIA have a positive five-session return after a daily loss greater than 3%?” in **Workbench**. Ollama can interpret it locally, or you can edit the rules in **Builder**. Review the dates, benchmark, execution costs and objective, then choose **Run experiment**.
 
-## Verification
+**All events** includes every qualifying observation. **Met objective** and **Counterexamples** show the two outcome groups. Each observation opens a chart with the signal, entry, exit, prices, benchmark and market regime. The default order for counterexamples shows the largest shortfall against the selected objective.
+
+The workbench supports overlapping event studies, long-only portfolio backtests, shared-calendar comparisons, time-block bootstrap inference, sensitivity grids, chronological holdouts and expanding walk-forward evaluation. Save, duplicate, compare or export experiments and reproduce them offline from their pinned snapshots. [Statistical methodology](docs/METHODOLOGY.md)
+
+## Verification and documentation
 
 ```bash
 .venv/bin/python -m pytest -q
@@ -68,6 +59,6 @@ npm --prefix frontend run build
 npm --prefix frontend run e2e
 ```
 
-Set `STOCKREPLAY_LIVE_TESTS=1` for the real Yahoo and installed Ollama tests. Browser tests start an isolated backend with a temporary database. They use system Chromium or the Playwright browser installed by setup. Details for alternate models and browser paths are in the installation guide.
+Browser tests use a temporary database. Deterministic tests inject their own CSV fixtures. Set `STOCKREPLAY_LIVE_TESTS=1` to exercise actual providers and a locally installed Ollama model. GitHub Actions runs installation, Keychain, Chromium, WebKit and launch/stop checks on Apple Silicon and Intel macOS 15 runners. [macOS verification](https://github.com/FunctionalTools/stockreplay/actions/workflows/macos.yml)
 
-StockReplay source code and its generated demonstration series are available under the [MIT License](LICENSE).
+[Installation and troubleshooting](docs/INSTALLATION.md) · [Architecture](docs/ARCHITECTURE.md) · [Data and attribution](docs/DATA.md) · [Verification record](BUILD_LOG.md) · [MIT license](LICENSE)

@@ -90,6 +90,8 @@ class Terminal:
               create table if not exists watch_members(list_id text references watchlists(id) on delete cascade,symbol text not null,primary key(list_id,symbol));
               create table if not exists price_alerts(id text primary key,symbol text not null,direction text not null,threshold real not null,created text not null,triggered text,price real,observed integer);
               create table if not exists chart_layouts(symbol text primary key,payload text not null);
+              create table if not exists market_recommendations(id text primary key, symbol text not null, created text not null,payload text not null);
+              create index if not exists recommendations_by_symbol on market_recommendations(symbol,created);
               create table if not exists public_grades(id text primary key,symbol text not null,firm text not null,grade text not null,date text not null,url text not null,unique(symbol,firm,grade,date,url));
               create table if not exists terminal_init(id integer primary key);
             """)
@@ -244,7 +246,24 @@ def register(app, db):
     @r.post("/desk/recommend/{symbol}")
     def recommend(symbol: str):
         t.openai.credentials()
-        return t.openai.recommend(t.desk.briefing(ticker(symbol)))
+        symbol = ticker(symbol)
+        answer = t.openai.recommend(t.desk.briefing(symbol))
+        key = uuid4().hex
+        t.update(
+            "insert into market_recommendations values(?,?,?,?)",
+            (key, symbol, answer["created"], json.dumps(answer, allow_nan=False)),
+        )
+        return {**answer, "id": key}
+
+    @r.get("/desk/recommend/{symbol}")
+    def history(symbol: str):
+        return [
+            {"id": row["id"], **json.loads(row["payload"])}
+            for row in t.query(
+                "select id,payload from market_recommendations where symbol=? order by created desc,rowid desc",
+                (ticker(symbol),),
+            )
+        ]
 
     @r.get("/desk/screener")
     def screener(screen_name: str = "most_actives", refresh: bool = False):

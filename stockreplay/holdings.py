@@ -70,7 +70,16 @@ ALIASES = {
         "security name",
         "name",
     ],
-    "quantity": ["quantity", "shares", "units", "qty", "share balance", "shares/units"],
+    "quantity": [
+        "quantity",
+        "shares",
+        "units",
+        "qty",
+        "share balance",
+        "shares/units",
+        "qty (quantity)",
+        "quantity (shares)",
+    ],
     "price": [
         "last price",
         "price",
@@ -78,6 +87,7 @@ ALIASES = {
         "unit price",
         "market price",
         "price per share",
+        "price (market price)",
     ],
     "value": [
         "current value",
@@ -86,6 +96,8 @@ ALIASES = {
         "value",
         "market value (usd)",
         "market value (local)",
+        "mkt val (market value)",
+        "total value",
         "balance",
     ],
     "basis": [
@@ -94,6 +106,7 @@ ALIASES = {
         "cost basis",
         "total cost",
         "book value",
+        "cost basis (total)",
     ],
     "currency": ["currency", "currency code", "local currency"],
     "account_number": [

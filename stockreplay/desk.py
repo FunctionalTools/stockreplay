@@ -490,6 +490,8 @@ class Desk:
                 "market-news:SPY", 600, lambda: stories("SPY", "market"), refresh
             ),
         }
+        tasks["volatility_index"] = lambda: self.chart("^VIX", "1d", "6mo", refresh)
+        tasks["treasury_yield"] = lambda: self.chart("^TNX", "1d", "6mo", refresh)
         if peer:
             tasks["sector_chart"] = lambda: self.chart(peer, refresh=refresh)
             tasks["sector_news"] = lambda: self.cache.get(
@@ -528,6 +530,22 @@ class Desk:
                         f"{n}-session return {100 * (p['close'] / bars[-n - 1]['close'] - 1):+.2f}%"
                     )
             add(group, ", ".join(measures), series["url"], p["date"], "Yahoo Finance")
+        for k, label, unit in [
+            ("volatility_index", "Cboe VIX", "index points"),
+            ("treasury_yield", "US ten-year Treasury yield", "%"),
+        ]:
+            indicator = v[k]["data"]
+            if not indicator:
+                continue
+            bars = indicator["bars"]
+            last = bars[-1]
+            text = f"{label} {last['raw_close']:.2f} {unit}"
+            if len(bars) > 21:
+                change = last["raw_close"] - bars[-22]["raw_close"]
+                text += f", 21-session change {change:+.2f} " + (
+                    "percentage points" if unit == "%" else unit
+                )
+            add("market", text, indicator["url"], last["date"], "Yahoo Finance")
         if r["stockreplay"]:
             own = r["stockreplay"]
             add(

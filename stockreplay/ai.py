@@ -1,12 +1,13 @@
 """Ollama may select operations and evidence. All prices and research prose numbers come from Python."""
 
 import json
+import re
 
 import httpx
 from pydantic import Field, ValidationError
 from typing import Literal
 
-from .language import clarify_semantics, literals, missing_data, trigger_symbol
+from .language import clarify_semantics, literals, missing_data, trigger_symbol, sole_daily_trigger
 from .schema import Condition, Experiment, Group, Indicator, Interpretation, Model, Symbol
 
 OLLAMA = "http://127.0.0.1:11434"
@@ -159,6 +160,12 @@ def interpret(request, model):
             # Only displayed defaults survive; discard prior rules, market regime and exits.
             base.update(kind="event", regime="all", exit=None, name=request.question[:100])
             base.update(plan.model_dump(exclude_none=True, exclude={"status", "message"}))
+            if not re.search(
+                r"\b(?:(?:19|20)\d{2}|(?:last|past|previous)\s+(?:\d+|[a-z]+)\s+(?:years?|months?))\b",
+                request.question,
+                re.I,
+            ):
+                base["start"], base["end"] = request.config.start, request.config.end
             if "holding" in explicit:
                 base["holding"] = explicit["holding"]
             if "movement" in explicit:
@@ -176,6 +183,10 @@ def interpret(request, model):
                     )
                     if named:
                         rules[0]["ticker"] = named
+                only = sole_daily_trigger(request.question, [*plan.tickers, base["benchmark"]])
+                if only:
+                    spec = Condition(indicator="daily_return", ticker=only, **explicit["movement"])
+                    base["entry"] = {"logic": "and", "rules": [spec.model_dump()]}
             base["hypothesis"] = request.question
             config = Experiment.model_validate(base)
             summary = f"Review {', '.join(config.tickers)} against {config.benchmark}. Signals execute at the next open, with a maximum hold of {config.holding} sessions."

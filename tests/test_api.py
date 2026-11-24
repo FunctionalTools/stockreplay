@@ -172,7 +172,7 @@ def test_holdout_does_not_influence_training(tmp_path):
 )
 def test_real_yahoo_and_cached_replay(client, monkeypatch):
     c = Experiment(source="yahoo")
-    expected = len(market.sessions(c.start,c.end))
+    expected = len(market.sessions(c.start, c.end))
     r = run(client, c.model_dump(mode="json"))
     assert all(s["source"] == "yahoo" and s["rows"] == expected for s in r["sources"].values())
     assert r["metrics"]["count"] > 0

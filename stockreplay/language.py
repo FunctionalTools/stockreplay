@@ -129,3 +129,37 @@ def clarify_semantics(question, tickers):
     ):
         return "Does recovery mean a positive net return, or regaining the closing price immediately before the decline?"
     return None
+
+
+def sole_daily_trigger(question, symbols):
+    """Recognize one explicit daily move following a conditional, with no further qualifiers."""
+    moves = list(MOVEMENT.finditer(question))
+    if len(moves) != 1:
+        return None
+    move = moves[0]
+    markers = list(re.finditer(r"\b(?:when|after|if)\b", question[: move.start()], re.I))
+    if not markers:
+        return None
+    subject = question[markers[-1].end() : move.start()].strip()
+    tail = question[move.end() :].strip(" ?.!").casefold()
+    if tail and not re.fullmatch(
+        r"(?:in|over|on) (?:a |one |a single |the same )?(?:trading )?(?:session|day)", tail
+    ):
+        return None
+    names = {**{s: s for s in symbols}, **ALIASES}
+    ticker = "ASSET"
+    for name, value in sorted(names.items(), key=lambda x: -len(x[0])):
+        match = re.match(
+            re.escape(name) + r"(?:['’]s)?(?: (?:stock|shares))?(?:\s+|$)", subject, re.I
+        )
+        if match:
+            ticker = value
+            subject = subject[match.end() :]
+            break
+    if not re.fullmatch(
+        r"(?:(?:it|the stock|the asset)\s*)?(?:(?:has|suffers|experiences)\s*)?(?:(?:a|an)\s*)?(?:daily|single[ -]session|one[ -]day)?",
+        subject.strip(),
+        re.I,
+    ):
+        return None
+    return ticker

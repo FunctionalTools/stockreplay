@@ -674,11 +674,13 @@ export function DataPage({ defaults }: { defaults: Config }) {
             onChange={(e) => setFilter(e.target.value)}
           >
             <option value="all">All sources</option>
-            {Object.entries(sourceName).map(([v, n]) => (
-              <option key={v} value={v}>
-                {n}
-              </option>
-            ))}
+            {Object.entries(sourceName)
+              .filter(([s]) => s !== 'demo' || catalog.some((x) => x.source === s))
+              .map(([v, n]) => (
+                <option key={v} value={v}>
+                  {n}
+                </option>
+              ))}
           </select>
         </div>
         <div className="table-wrap">
@@ -728,7 +730,15 @@ export function DataPage({ defaults }: { defaults: Config }) {
     </>
   )
 }
-export function SettingsPage({ ai, update }: { ai: AIStatus; update: (a: AIStatus) => void }) {
+export function SettingsPage({
+  ai,
+  update,
+  keyChanged,
+}: {
+  ai: AIStatus
+  update: (a: AIStatus) => void
+  keyChanged: () => void
+}) {
   const [model, setModel] = useState(ai.model),
     [err, setError] = useState(''),
     [busy, setBusy] = useState(false),
@@ -759,7 +769,7 @@ export function SettingsPage({ ai, update }: { ai: AIStatus; update: (a: AIStatu
           <p>Connect OpenAI for market recommendations and manage local Ollama interpretation.</p>
         </div>
       </div>
-      <OpenAISettings />
+      <OpenAISettings changed={keyChanged} />
       <section className="panel form-panel">
         <div className="panel-head flush">
           <div className="title-icon">

@@ -49,6 +49,7 @@ import { ChartDesk } from './ChartDesk'
 import { Watchlists, Screener } from './Watch'
 import { HoldingsPage } from './Positions'
 import { TradingTools } from './TradingTools'
+import { useResource, type OpenStatus } from './deskCommon'
 
 const markets = [
   { name: 'Market research', icon: Newspaper },
@@ -90,6 +91,7 @@ export default function App() {
     [save, saveOpen] = useState(false),
     [exp, exportOpen] = useState(false),
     [loading, setLoading] = useState(true)
+  const cloud = useResource<OpenStatus>('/openai')
   const openingRevision = useRef(0)
   const [openingMessage, setOpeningMessage] = useState('')
   const prompt = useRef<HTMLTextAreaElement>(null)
@@ -221,6 +223,7 @@ export default function App() {
   }
   async function interpret() {
     if (!draft || !question.trim()) return
+    editWorkbench()
     setWorking('Interpreting with Ollama')
     setError('')
     setNotice('')
@@ -349,11 +352,15 @@ export default function App() {
             <b>{page}</b>
           </div>
           <button
-            className={'status ' + (ai.ready ? 'ready' : '')}
+            className={'status ' + (ai.ready || cloud.data?.configured ? 'ready' : '')}
             onClick={() => navigate('Settings')}
           >
             <i />
-            {ai.ready ? 'Ollama online' : ai.online ? 'Model unavailable' : 'Ollama offline'}
+            {cloud.data?.configured
+              ? 'OpenAI configured'
+              : ai.ready
+                ? 'Ollama online'
+                : 'AI settings'}
           </button>
         </header>
         <main id="main">
@@ -576,7 +583,9 @@ export default function App() {
               )}
               {page === 'Compare' && <Compare items={items} />}
               {page === 'Market data' && <DataPage defaults={defaults} />}
-              {page === 'Settings' && <SettingsPage ai={ai} update={setAI} />}
+              {page === 'Settings' && (
+                <SettingsPage ai={ai} update={setAI} keyChanged={() => cloud.reload()} />
+              )}
               {page === 'Robustness lab' &&
                 (result ? (
                   <Robustness

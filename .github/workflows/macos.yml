@@ -11,7 +11,12 @@ permissions:
   contents: read
 jobs:
   macos:
-    runs-on: macos-15
+    name: macOS verification (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-15, macos-15-intel]
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 25
     env:
       STOCKREPLAY_SKIP_AI: "1"
@@ -47,10 +52,14 @@ jobs:
           curl --fail http://127.0.0.1:8765/api/health
           ./stop.sh
       - name: Verify current public sources on macOS
-        if: github.event_name == 'workflow_dispatch' && inputs.live_providers
+        if: github.event_name == 'workflow_dispatch' && inputs.live_providers && matrix.runner == 'macos-15'
         env:
           STOCKREPLAY_PUBLIC_LIVE: "1"
           STOCKREPLAY_LIVE_TESTS: "1"
         run: |
           .venv/bin/python -m pytest -q -s tests/test_terminal.py -k live_public_sources
-          npm --prefix frontend run e2e -- terminal.spec.ts --grep "native chart studies|public research"
+      - name: Verify the provider-hosted chart and research UI
+        if: always() && github.event_name == 'workflow_dispatch' && inputs.live_providers && matrix.runner == 'macos-15'
+        env:
+          STOCKREPLAY_LIVE_TESTS: "1"
+        run: npm --prefix frontend run e2e -- terminal.spec.ts --grep "native chart studies|public research"

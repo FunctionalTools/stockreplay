@@ -286,6 +286,8 @@ def test_openai_explicit_public_only_contract(client, monkeypatch):
     assert client.post("/api/openai/test").is_success
     result = client.post("/api/desk/recommend/NVDA")
     assert result.is_success and len(result.json()["sources"]) == 5
+    saved = client.get("/api/desk/recommend/NVDA").json()
+    assert saved == [result.json()] and client.get("/api/desk/recommend/SPY").json() == []
     opinion["thesis"]["text"] = "Expect 999% upside."
     assert client.post("/api/desk/recommend/NVDA").status_code == 502
     opinion["thesis"] = point("Invalid citation.", "unknown")
@@ -329,13 +331,28 @@ def test_native_keychain_lifecycle(tmp_path, monkeypatch):
         subprocess.run(["security", "delete-keychain", path], check=True)
 
 
-@pytest.mark.skipif(os.getenv("STOCKREPLAY_PUBLIC_LIVE") != "1", reason="opt in to current public providers")
+@pytest.mark.skipif(
+    os.getenv("STOCKREPLAY_PUBLIC_LIVE") != "1", reason="opt in to current public providers"
+)
 def test_live_public_sources(client):
-    chart=client.get("/api/desk/chart/NVDA?interval=1d&span=2y").json()
-    assert chart["data"]["as_of"]==latest_session().isoformat() and chart["data"]["currency"]=="USD"
-    r=client.get("/api/desk/ratings/NVDA").json()
-    assert r["stockreplay"] and r["actions"]["data"] and r["nasdaq"]["data"] and r["stockanalysis"]["data"]
-    b=client.get("/api/desk/brief/NVDA").json()
+    chart = client.get("/api/desk/chart/NVDA?interval=1d&span=2y").json()
+    assert (
+        chart["data"]["as_of"] == latest_session().isoformat()
+        and chart["data"]["currency"] == "USD"
+    )
+    r = client.get("/api/desk/ratings/NVDA").json()
+    assert r["stockreplay"] and r["actions"]["data"] and r["consensus"]["data"]
+    for name in ("nasdaq", "stockanalysis"):
+        packet = r[name]
+        if packet["data"] is None:
+            assert packet["error"] and not packet["stale"]
+            print(f"{name} reported unavailability: {packet['error']}")
+    assert r["nasdaq"]["data"] or r["stockanalysis"]["data"], (
+        "Both independent ratings publishers were unavailable."
+    )
+    b = client.get("/api/desk/brief/NVDA").json()
     assert b["current_context"] and b["current_prices"]
-    assert {"company_news","sector_news","market","price"}<={x["group"] for x in b["evidence"]}
-    print(f"NVDA through {b['as_of']}: {len(b['evidence'])} evidence items, {len(r['actions']['data'])} Yahoo actions and {len(r['stockanalysis']['data'])} Stock Analysis disclosures.")
+    assert {"company_news", "sector_news", "market", "price"} <= {x["group"] for x in b["evidence"]}
+    print(
+        f"NVDA through {b['as_of']}: {len(b['evidence'])} evidence items, {len(r['actions']['data'])} Yahoo actions and {len(r['stockanalysis']['data'] or [])} Stock Analysis disclosures."
+    )

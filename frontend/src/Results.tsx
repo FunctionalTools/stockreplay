@@ -22,7 +22,6 @@ import {
   money,
   shortDate,
   indicators,
-  objectives,
   api,
   type Explanation,
   errorText,
@@ -84,8 +83,23 @@ export function Events({ r }: { r: Result }) {
             <h3>Event explorer</h3>
           </div>
           <p>
-            Objective: {objectives[r.config.objective]}. Counterexamples are qualifying signals that
-            missed this objective.
+            {
+              (
+                {
+                  positive:
+                    'An event meets this objective when its return after costs is above zero.',
+                  negative:
+                    'An event meets this objective when its return after costs is below zero.',
+                  outperform:
+                    'An event meets this objective when its net return exceeds the benchmark over the same holding window.',
+                  underperform:
+                    'An event meets this objective when its net return is below the benchmark over the same holding window.',
+                  recovery:
+                    'An event meets this objective when an adjusted close during the holding window reaches the close immediately before the signal.',
+                } as Record<string, string>
+              )[r.config.objective]
+            }{' '}
+            Counterexamples are the qualifying signals that missed that test.
           </p>
         </div>
         <label className="sort">

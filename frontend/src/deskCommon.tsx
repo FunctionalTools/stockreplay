@@ -193,7 +193,12 @@ export function RatingCard({ rating }: { rating: Rating | null }) {
         <>
           <div className="rating-number">
             {rating.score}
-            <small> / 100</small> <span className="badge green">{rating.label}</span>
+            <small> / 100</small>{' '}
+            <span
+              className={'badge ' + (rating.score >= 60 ? 'green' : rating.score < 40 ? 'red' : '')}
+            >
+              {rating.label}
+            </span>
           </div>
           <p className="helper">
             Adjusted closes through {rating.as_of}

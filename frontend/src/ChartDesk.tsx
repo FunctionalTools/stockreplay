@@ -4,6 +4,8 @@ import {
   createChart,
   CrosshairMode,
   LineStyle,
+  TickMarkType,
+  type Time,
   type IChartApi,
   type UTCTimestamp,
 } from 'lightweight-charts'
@@ -111,6 +113,29 @@ function Canvas({ data, comparison, layout, count, draw, pick, handle }: MountPr
     const bars = data.bars.slice(0, count)
     if (!bars.length) return
     const intraday = ['1m', '5m', '15m', '1h'].includes(layout.interval)
+    const zone = intraday ? data.timezone || 'UTC' : 'UTC'
+    const formatter = (opts: Intl.DateTimeFormatOptions) =>
+      new Intl.DateTimeFormat('en-US', { timeZone: zone, ...opts })
+    const clock = formatter({ hour: '2-digit', minute: '2-digit', hour12: false }),
+      day = formatter({ month: 'short', day: 'numeric' }),
+      month = formatter({ month: 'short' }),
+      year = formatter({ year: 'numeric' }),
+      full = formatter(
+        intraday ? { dateStyle: 'medium', timeStyle: 'short' } : { dateStyle: 'medium' },
+      )
+    const tick = (time: Time, kind: TickMarkType) => {
+      if (typeof time !== 'number') return null
+      const value = new Date(time * 1000)
+      return (
+        kind === TickMarkType.Year
+          ? year
+          : kind === TickMarkType.Month
+            ? month
+            : kind === TickMarkType.DayOfMonth
+              ? day
+              : clock
+      ).format(value)
+    }
     const options = {
       width: el.clientWidth,
       height: 400,
@@ -125,7 +150,11 @@ function Canvas({ data, comparison, layout, count, draw, pick, handle }: MountPr
         horzLines: { color: '#253039' },
       },
       crosshair: { mode: CrosshairMode.Normal },
+      localization: {
+        timeFormatter: (t: Time) => (typeof t === 'number' ? full.format(t * 1000) : String(t)),
+      },
       timeScale: {
+        tickMarkFormatter: tick,
         timeVisible: intraday,
         secondsVisible: false,
         borderColor: '#283139',

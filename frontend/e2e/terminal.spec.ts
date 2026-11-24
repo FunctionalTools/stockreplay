@@ -185,7 +185,9 @@ test('watchlists, screener shortcuts and alerts persist', async ({ page }) => {
   await open(page, 'Watchlists')
   await page.getByLabel('New watchlist name').fill('Browser research list')
   await page.getByRole('button', { name: 'Create list' }).click()
-  await expect(page.getByRole('combobox', { name:'Watchlist', exact:true })).toContainText('Browser research list')
+  await expect(page.getByRole('combobox', { name: 'Watchlist', exact: true })).toContainText(
+    'Browser research list',
+  )
   await page.getByLabel('Add watchlist symbol').fill('NVDA')
   await page.getByRole('button', { name: 'Add symbol' }).click()
   await expect(page.getByRole('button', { name: 'Ratings', exact: true })).toBeVisible()
@@ -200,12 +202,12 @@ test('watchlists, screener shortcuts and alerts persist', async ({ page }) => {
   await nav(page, 'Watchlists')
   await page.getByRole('button', { name: 'Delete alert for NVDA' }).click()
   await page
-    .getByRole('combobox', { name:'Watchlist', exact:true })
+    .getByRole('combobox', { name: 'Watchlist', exact: true })
     .selectOption({ label: 'Browser research list' })
   await page.getByText('Manage this watchlist').click()
   await page.getByRole('button', { name: 'Delete list', exact: true }).click()
   await page.getByRole('dialog').getByRole('button', { name: 'Delete watchlist' }).click()
-  await expect(page.getByRole('combobox', { name:'Watchlist', exact:true })).not.toContainText(
+  await expect(page.getByRole('combobox', { name: 'Watchlist', exact: true })).not.toContainText(
     'Browser research list',
   )
 })
@@ -235,6 +237,33 @@ test('public research, issuer ratings and explicit in-site API-key controls', as
   )
   await page.getByRole('button', { name: 'Generate recommendation' }).click()
   await expect(page.getByRole('alert')).toContainText('API credits')
+  if (!live) {
+    const point = { text: 'A cited integration-test observation.', citations: ['company_news'] }
+    const sample = {
+      id: 'test-view',
+      stance: 'Neutral',
+      horizon: 'Weeks',
+      thesis: point,
+      catalysts: [point],
+      risks: [point],
+      reconsider: point,
+      created: date + 'T18:00:00Z',
+      as_of: date,
+      model: 'integration-model',
+      sources: evidence,
+    }
+    await page.unroute('**/api/desk/recommend/NVDA')
+    await page.route('**/api/desk/recommend/NVDA', (route) =>
+      route.fulfill({ json: route.request().method() === 'POST' ? sample : [sample] }),
+    )
+    await page.getByRole('button', { name: 'Generate recommendation' }).click()
+    await expect(page.getByLabel('Saved recommendations on this Mac')).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'What would change the view' })).toBeVisible()
+    await expect(page.locator('.opinion .ref').first()).toHaveAttribute(
+      'href',
+      'https://example.org/company_news',
+    )
+  }
   await nav(page, 'Investor ratings')
   await expect(page.getByRole('heading', { name: 'Published analyst actions' })).toBeVisible({
     timeout: 90000,
@@ -244,8 +273,10 @@ test('public research, issuer ratings and explicit in-site API-key controls', as
   await expect(page.getByText('No matching dated rating is available.')).toBeVisible()
   await filter.fill('')
   await expect(page.locator('table').last().locator('tbody tr').first()).toBeVisible()
-  if (live && process.env.STOCKREPLAY_SCREENSHOTS === '1')
+  if (live && process.env.STOCKREPLAY_SCREENSHOTS === '1') {
+    await page.evaluate(() => window.scrollTo(0, 0))
     await page.screenshot({ path: '../docs/screenshots/investor-ratings.png' })
+  }
   await page.getByRole('button', { name: 'Settings', exact: true }).click()
   await page.getByRole('button', { name: 'Remove API key', exact: true }).click()
   await expect(page.getByText('No key configured')).toBeVisible()

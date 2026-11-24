@@ -35,6 +35,7 @@ type Brief = {
 }
 type Point = { text: string; citations: string[] }
 type Opinion = {
+  id: string
   stance: string
   horizon: string
   thesis: Point
@@ -132,17 +133,20 @@ function OpinionView({ opinion: o }: { opinion: Opinion }) {
 export function MarketResearch({ symbol, select, go }: DeskProps) {
   const data = useResource<Brief>('/desk/brief/' + encodeURIComponent(symbol)),
     key = useResource<OpenStatus>('/openai'),
+    history = useResource<Opinion[]>('/desk/recommend/' + encodeURIComponent(symbol)),
     [filter, setFilter] = useState('all'),
     [busy, wait] = useState(false),
     [error, setError] = useState(''),
-    [answer, setAnswer] = useState<Opinion | null>(null)
+    [selected, setSelected] = useState('')
+  const answer = history.data?.find((v) => v.id === selected) || history.data?.[0]
   const b = data.data
   async function generate() {
     wait(true)
     setError('')
-    setAnswer(null)
     try {
-      setAnswer(await api<Opinion>('/desk/recommend/' + encodeURIComponent(symbol), 'POST'))
+      const answer = await api<Opinion>('/desk/recommend/' + encodeURIComponent(symbol), 'POST')
+      setSelected(answer.id)
+      history.reload()
     } catch (e) {
       setError(errorText(e))
     } finally {
@@ -159,7 +163,6 @@ export function MarketResearch({ symbol, select, go }: DeskProps) {
         symbol={symbol}
         select={select}
         refresh={() => {
-          setAnswer(null)
           data.reload(true)
         }}
         busy={data.loading || busy}
@@ -208,6 +211,17 @@ export function MarketResearch({ symbol, select, go }: DeskProps) {
                 </p>
               )}
               <ErrorBox text={error} />
+              {(history.data?.length || 0) > 0 && (
+                <Field name="Saved recommendations on this Mac">
+                  <select value={answer?.id} onChange={(e) => setSelected(e.target.value)}>
+                    {history.data?.map((o) => (
+                      <option key={o.id} value={o.id}>
+                        {new Date(o.created).toLocaleString()} · {o.stance} · {o.model}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              )}
               {answer && <OpinionView opinion={answer} />}
             </section>
             <RatingCard rating={b.rating} />
@@ -538,7 +552,7 @@ export function RatingsPage({ symbol, select, go }: DeskProps) {
 function NumberOrNull(v: unknown) {
   return typeof v === 'number' ? v : null
 }
-export function OpenAISettings() {
+export function OpenAISettings({ changed }: { changed: () => void }) {
   const s = useResource<OpenStatus>('/openai'),
     [model, setModel] = useState('gpt-4.1-mini'),
     [key, enter] = useState(''),
@@ -569,6 +583,7 @@ export function OpenAISettings() {
         enter('')
         show('API key removed.')
       }
+      changed()
       s.reload()
     } catch (e) {
       setError(errorText(e))
