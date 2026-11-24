@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ColorType,
   createChart,
   CrosshairMode,
   LineStyle,
   TickMarkType,
+  PriceScaleMode,
   type Time,
   type IChartApi,
   type UTCTimestamp,
@@ -47,6 +48,8 @@ type Layout = {
   style: 'Candles' | 'Line' | 'OHLC' | 'Area'
   studies: string[]
   compare: string
+  scale: 'Linear' | 'Logarithmic' | 'Percentage' | 'Indexed to 100'
+  panels: string[]
   drawings: Drawing[]
 }
 const defaultLayout: Layout = {
@@ -55,6 +58,8 @@ const defaultLayout: Layout = {
   style: 'Candles',
   studies: ['Volume', 'SMA 20'],
   compare: '',
+  scale: 'Linear',
+  panels: [],
   drawings: [],
 }
 const ranges: Record<string, string[]> = {
@@ -138,7 +143,7 @@ function Canvas({ data, comparison, layout, count, draw, pick, handle }: MountPr
     }
     const options = {
       width: el.clientWidth,
-      height: 400,
+      height: el.clientHeight || 400,
       layout: {
         background: { type: ColorType.Solid, color: '#11171c' },
         textColor: '#aab8bd',
@@ -163,6 +168,16 @@ function Canvas({ data, comparison, layout, count, draw, pick, handle }: MountPr
       handleScroll: { vertTouchDrag: false },
     }
     const chart = createChart(el, options)
+    chart
+      .priceScale('right')
+      .applyOptions({
+        mode: {
+          Linear: PriceScaleMode.Normal,
+          Logarithmic: PriceScaleMode.Logarithmic,
+          Percentage: PriceScaleMode.Percentage,
+          'Indexed to 100': PriceScaleMode.IndexedTo100,
+        }[layout.scale],
+      })
     handle.current = chart
     const candles = {
       upColor: green,
@@ -338,7 +353,7 @@ function Canvas({ data, comparison, layout, count, draw, pick, handle }: MountPr
     sync()
     chart.timeScale().subscribeVisibleLogicalRangeChange(sync)
     const ro = new ResizeObserver(() => {
-      chart.applyOptions({ width: el.clientWidth })
+      chart.applyOptions({ width: el.clientWidth, height: el.clientHeight || 400 })
       panes.forEach((p) => p.applyOptions({ width: el.clientWidth }))
     })
     ro.observe(el)
@@ -361,6 +376,57 @@ function Canvas({ data, comparison, layout, count, draw, pick, handle }: MountPr
     </>
   )
 }
+function CompanionChart({
+  symbol,
+  layout,
+  until,
+  refresh,
+}: {
+  symbol: string
+  layout: Layout
+  until: number
+  refresh: number
+}) {
+  const resource = useResource<Packet<Series>>(
+    '/desk/chart/' +
+      encodeURIComponent(symbol) +
+      '?interval=' +
+      layout.interval +
+      '&span=' +
+      layout.span +
+      (refresh ? '&refresh=true&request=' + refresh : ''),
+  )
+  const handle = useRef<IChartApi | null>(null)
+  const options = useMemo(() => ({ ...layout, drawings: [], compare: '' }), [layout])
+  const series = resource.data?.data
+  const count = series?.bars.filter((bar) => bar.time <= until).length || 0
+  const last = series?.bars[count - 1]
+  return (
+    <section className="companion-chart" aria-label={symbol + ' price panel'}>
+      <h4>
+        {symbol}{' '}
+        <small>
+          {last ? fmt(last.close) + ' ' + (series?.currency || '') + ' · ' + last.date : ''}
+        </small>
+      </h4>
+      <FetchState {...resource} />
+      {resource.data && <PacketNote p={resource.data} />}
+      {series && count > 0 && (
+        <Canvas
+          data={series}
+          comparison={null}
+          layout={options}
+          count={count}
+          draw=""
+          pick={() => {}}
+          handle={handle}
+        />
+      )}
+      {series && !count && <p>No observations in the replay window.</p>}
+    </section>
+  )
+}
+
 export function ChartDesk({
   symbol,
   select,
@@ -373,6 +439,8 @@ export function ChartDesk({
   const [layout, set] = useState<Layout>(defaultLayout),
     [ready, setReady] = useState(false),
     [compare, compareInput] = useState(''),
+    [panelInput, setPanels] = useState(''),
+    [panelRefresh, refreshPanels] = useState(0),
     [draw, tool] = useState(''),
     [start, first] = useState<{ time: number; price: number } | null>(null),
     [cursor, seek] = useState<number | null>(null),
@@ -385,7 +453,8 @@ export function ChartDesk({
     void api<Layout | null>('/desk/layout/' + encodeURIComponent(symbol))
       .then((c) => {
         if (active && c) {
-          set(c)
+          set({ ...defaultLayout, ...c })
+          setPanels((c.panels || []).join(', '))
           compareInput(c.compare)
         }
       })
@@ -461,6 +530,35 @@ export function ChartDesk({
     a.download = symbol + '-' + layout.interval + '.png'
     a.click()
   }
+  function downloadBars() {
+    if (!data) return
+    const rows = data.bars
+      .slice(0, count)
+      .map((b) =>
+        [
+          b.time,
+          b.date,
+          b.open,
+          b.high,
+          b.low,
+          b.close,
+          b.raw_close,
+          b.volume,
+          b.dividend,
+          b.split,
+        ].join(','),
+      )
+    const header =
+      'UnixTime,ExchangeDate,AdjustedOpen,AdjustedHigh,AdjustedLow,AdjustedClose,NominalClose,Volume,Dividend,Split'
+    const url = URL.createObjectURL(
+      new Blob([[header, ...rows].join('\n') + '\n'], { type: 'text/csv' }),
+    )
+    const a = document.createElement('a')
+    a.href = url
+    a.download = symbol + '-' + layout.interval + '-bars.csv'
+    a.click()
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+  }
   return (
     <>
       <PageHead
@@ -475,6 +573,7 @@ export function ChartDesk({
         symbol={symbol}
         select={select}
         refresh={() => {
+          refreshPanels((n) => n + 1)
           series.reload(true)
           if (layout.compare) comp.reload(true)
         }}
@@ -533,6 +632,49 @@ export function ChartDesk({
             <button className="btn">Apply comparison</button>
           </form>
         </div>
+        <div className="desk-toolbar">
+          <Field name="Price scale">
+            <select
+              value={layout.scale}
+              onChange={(e) => change({ scale: e.target.value as Layout['scale'] })}
+            >
+              {['Linear', 'Logarithmic', 'Percentage', 'Indexed to 100'].map((v) => (
+                <option key={v}>{v}</option>
+              ))}
+            </select>
+          </Field>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault()
+              const panels = [
+                ...new Set(
+                  panelInput
+                    .toUpperCase()
+                    .split(/[\s,]+/)
+                    .filter((s) => s && s !== symbol),
+                ),
+              ]
+              if (
+                panels.length > 3 ||
+                panels.some((s) => !/^[A-Z0-9^][A-Z0-9.^=-]{0,19}$/.test(s))
+              ) {
+                setErr('Enter up to three valid additional symbols.')
+                return
+              }
+              setErr('')
+              change({ panels })
+            }}
+          >
+            <Field name="Additional chart symbols">
+              <input
+                value={panelInput}
+                placeholder="SPY, QQQ, IWM"
+                onChange={(e) => setPanels(e.target.value)}
+              />
+            </Field>
+            <button className="btn">Apply panels</button>
+          </form>
+        </div>
         <div className="study-options">
           {studyNames.map((s) => (
             <label key={s}>
@@ -565,24 +707,49 @@ export function ChartDesk({
                   {fmt(b.close)} <small>{data.currency || ''}</small>
                 </h2>
                 <p>
-                  {cursor == null ? 'Latest displayed bar' : 'Replay bar'} · {b.date} ·{' '}
-                  {data.timezone}
+                  {cursor == null ? 'Latest displayed bar' : 'Replay bar'} ·{' '}
+                  {['1m', '5m', '15m', '1h'].includes(layout.interval)
+                    ? new Date(b.time * 1000).toLocaleString('en-US', {
+                        timeZone: data.timezone,
+                        dateStyle: 'medium',
+                        timeStyle: 'short',
+                      })
+                    : b.date}{' '}
+                  · {data.timezone}
                   {layout.compare ? ' · ' + layout.compare + ' rebased at first shared close' : ''}
                 </p>
               </div>
-              <button className="icon-btn" aria-label="Export price chart PNG" onClick={png}>
-                <Download size={16} />
-              </button>
+              <div className="inline">
+                <button className="btn small" onClick={downloadBars}>
+                  Export bars CSV
+                </button>
+                <button className="icon-btn" aria-label="Export price chart PNG" onClick={png}>
+                  <Download size={16} />
+                </button>
+              </div>
             </div>
-            <Canvas
-              data={data}
-              comparison={comp.data?.data || null}
-              count={count}
-              layout={layout}
-              draw={draw}
-              pick={pick}
-              handle={handle}
-            />
+            <div className={layout.panels.length ? 'chart-grid multi' : 'chart-grid'}>
+              <section className="primary-chart" aria-label={symbol + ' price panel'}>
+                <Canvas
+                  data={data}
+                  comparison={comp.data?.data || null}
+                  count={count}
+                  layout={layout}
+                  draw={draw}
+                  pick={pick}
+                  handle={handle}
+                />
+              </section>
+              {layout.panels.map((t) => (
+                <CompanionChart
+                  key={t}
+                  symbol={t}
+                  layout={layout}
+                  until={b.time}
+                  refresh={panelRefresh}
+                />
+              ))}
+            </div>
             <div className="desk-toolbar replay">
               <button
                 className="btn"

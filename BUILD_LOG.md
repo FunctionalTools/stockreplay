@@ -4,7 +4,7 @@
 
 StockReplay now launches from Finder or Terminal on macOS. Both launch paths use a loopback server and the checkout’s local database. GitHub Actions verifies the macOS installation, application lifecycle and browser workflows. The native Keychain test uses a temporary keychain, reopens the saved credential in a new service instance, then removes it.
 
-The macOS 15 run on November 24, 2026 passed setup, TypeScript and Vite compilation, 71 Python checks, eight frontend unit checks, nine Chromium scenarios, four WebKit scenarios, loopback startup and scoped shutdown. The workflow continues running on each main-branch push. [Native run](https://github.com/FunctionalTools/stockreplay/actions/runs/45501790876) · [Current main verification](https://github.com/FunctionalTools/stockreplay/actions/workflows/macos.yml)
+The macOS 15 run on November 24, 2026 passed setup, TypeScript and Vite compilation, 71 Python checks, eight frontend unit checks, nine Chromium scenarios, four WebKit scenarios, loopback startup and scoped shutdown. A subsequent native run exercised live public evidence and rendered TradingView’s hosted chart inside the local application on Apple Silicon. The workflow continues running on each main-branch push. [Native run](https://github.com/FunctionalTools/stockreplay/actions/runs/45501790876) · [Live provider and browser verification](https://github.com/FunctionalTools/stockreplay/actions/runs/45503015427) · [Current main verification](https://github.com/FunctionalTools/stockreplay/actions/workflows/macos.yml)
 
 ## Live provider observations
 
@@ -24,4 +24,4 @@ Holdings tests use isolated statements for Fidelity, mapped CSV, OFX 1.x investm
 
 Run the verification commands in the README. To exercise current public providers on macOS, dispatch the macOS verification workflow with the live-providers input enabled. The live browser workflow needs network access. The uncredentialed regression suite runs locally with explicitly imported fixtures. Readers can reproduce a historical experiment by opening its portable bundle with its pinned snapshots.
 
-[Workbench](docs/screenshots/workbench.png) · [Native charts](docs/screenshots/charts.png) · [Investor ratings](docs/screenshots/investor-ratings.png) · [Counterexamples](docs/screenshots/counterexample.png) · [Robustness](docs/screenshots/robustness.png) · [Mobile](docs/screenshots/mobile.png)
+[Workbench](docs/screenshots/workbench.png) · [Market research](docs/screenshots/market-research.png) · [Native charts](docs/screenshots/charts.png) · [Investor ratings](docs/screenshots/investor-ratings.png) · [Counterexamples](docs/screenshots/counterexample.png) · [Robustness](docs/screenshots/robustness.png) · [Mobile](docs/screenshots/mobile.png)

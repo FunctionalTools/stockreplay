@@ -30,7 +30,7 @@ The sources have different coverage and update schedules. A firm may appear in s
 
 | Page | What you can do |
 | --- | --- |
-| Charts | Explore minute through monthly bars, candles, OHLC, lines, areas, volume, SMA, EMA, Bollinger bands, RSI, MACD and corporate actions. Compare symbols, draw levels and trend lines, replay history, save local layouts and export a PNG. |
+| Charts | Explore minute through monthly bars, candles, OHLC, lines, areas, volume, SMA, EMA, Bollinger bands, RSI, MACD and corporate actions. Arrange up to four symbol panels on linear, logarithmic, percentage or indexed scales. Compare symbols, draw levels and trend lines, replay history, save local layouts and export a PNG or bar CSV. |
 | Market screener | Browse six Yahoo screens, filter by name, price and capitalization, sort results, and add symbols to a watchlist. Quote dates appear with the results. |
 | Watchlists | Create, rename and delete local lists. Follow symbols, open charts or ratings, and create threshold alerts checked while the app is running. |
 | Holdings | Preview Fidelity positions CSVs, mapped CSVs from other institutions, and OFX/QFX investment positions or bank ledger balances. Add and edit accounts or positions manually. View statement totals separately by currency. |

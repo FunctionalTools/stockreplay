@@ -290,12 +290,21 @@ test('native chart studies, replay, saved layouts and isolated TradingView tools
   await expect(page.locator('.desk-chart canvas').first()).toBeVisible({
     timeout: 60000,
   })
+  await page.getByLabel('Additional chart symbols').fill('SPY')
+  await page.getByRole('button', { name: 'Apply panels' }).click()
+  await expect(
+    page.getByRole('region', { name: 'SPY price panel' }).locator('canvas').first(),
+  ).toBeVisible({ timeout: 60000 })
+  await page.getByLabel('Price scale').selectOption('Logarithmic')
+  const bars = page.waitForEvent('download')
+  await page.getByRole('button', { name: 'Export bars CSV' }).click()
+  expect((await bars).suggestedFilename()).toBe('NVDA-1d-bars.csv')
   await page.getByLabel('Chart style').selectOption('OHLC')
   await page.getByLabel('RSI 14', { exact: true }).check()
   await page.getByLabel('MACD', { exact: true }).check()
   await expect(page.locator('[data-study="RSI 14"] canvas').first()).toBeVisible()
   await page.getByRole('button', { name: 'Horizontal level' }).click()
-  await page.locator('.desk-chart').click({ position: { x: 160, y: 120 } })
+  await page.locator('.primary-chart .desk-chart').click({ position: { x: 160, y: 120 } })
   await expect(page.getByRole('button', { name: 'Undo drawing' })).toBeEnabled()
   await page.getByLabel('Compare ticker').fill('SPY')
   await page.getByRole('button', { name: 'Apply comparison' }).click()

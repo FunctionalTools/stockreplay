@@ -60,6 +60,8 @@ class Layout(Model):
         ]
     ] = Field(max_length=7)
     compare: str = Field(default="", max_length=20)
+    scale: Literal["Linear", "Logarithmic", "Percentage", "Indexed to 100"] = "Linear"
+    panels: list[str] = Field(default_factory=list, max_length=3)
     drawings: list[Drawing] = Field(default_factory=list, max_length=100)
 
 
@@ -363,6 +365,9 @@ def register(app, db):
     def save_layout(symbol: str, item: Layout):
         if item.interval not in INTERVALS or item.span not in INTERVALS[item.interval]:
             raise ValueError("Unsupported chart period.")
+        item.panels = list(
+            dict.fromkeys(ticker(s) for s in item.panels if ticker(s) != ticker(symbol))
+        )
         if item.compare:
             item.compare = ticker(item.compare)
         t.update(
