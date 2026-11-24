@@ -257,7 +257,7 @@ export function Assistant({ page, symbol, connection, navigate, save, updated, c
       })
       await save({ advanced: true })
       updated()
-      navigate('Research', s, 'tools')
+      navigate('Research', s, 'layout_saved')
       text('Saved the ' + a.shape + ' drawing on ' + s + '.')
       return
     }
@@ -320,7 +320,15 @@ export function Assistant({ page, symbol, connection, navigate, save, updated, c
         })
       }
       await save({ advanced: true })
-      navigate('Research', s, a.tool && a.tool !== 'inspect' ? a.tool : 'tools')
+      navigate(
+        'Research',
+        s,
+        a.kind === 'chart_layout'
+          ? 'layout_saved'
+          : a.tool && a.tool !== 'inspect'
+            ? a.tool
+            : 'tools',
+      )
       text(
         a.tool && ['trend', 'box'].includes(a.tool)
           ? 'Select two points on the advanced chart.'

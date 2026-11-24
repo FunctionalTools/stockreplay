@@ -42,6 +42,7 @@ test('appearance, model dropdown and advanced chart drawings persist', async ({
   request,
 }) => {
   test.skip(live)
+  await request.put('/api/openai', { data: { key: 'intercepted-browser-test-credential' } })
   await page.goto('/#/settings/NVDA')
   await page.getByRole('button', { name: 'dark', exact: true }).click()
   await page.getByRole('button', { name: 'violet', exact: true }).click()
@@ -65,6 +66,16 @@ test('appearance, model dropdown and advanced chart drawings persist', async ({
   await expect(page.getByText('Select the second point on the chart.')).toBeVisible()
   await chart.click({ position: { x: 270, y: 180 } })
   await expect(page.getByRole('button', { name: 'Undo drawing' })).toBeEnabled()
+  await page.getByRole('button', { name: 'Open assistant' }).click()
+  const chat = page.getByRole('region', { name: 'StockReplay assistant' })
+  await chat.getByLabel('Message the assistant').fill('Set a price alert for NVDA above 25')
+  await chat.getByRole('button', { name: 'Send message' }).click()
+  await expect(chat.getByText('Watching NVDA above 25.')).toBeVisible()
+  await chat.getByLabel('Message the assistant').fill('Save my chart layout')
+  await chat.getByRole('button', { name: 'Send message' }).click()
+  await expect(page.getByText('Chart layout saved on this Mac.')).toBeVisible()
+  await chat.getByRole('button', { name: 'Minimize assistant' }).click()
+  await expect(page.getByRole('button', { name: 'Undo drawing' })).toBeEnabled()
   await page.getByRole('button', { name: 'Save layout' }).click()
   await expect(page.getByText('Chart layout saved on this Mac.')).toBeVisible()
   const layout = await (await request.get('/api/desk/layout/NVDA')).json()
@@ -81,27 +92,23 @@ test('watchlist file, local Fidelity holdings and imported daily chart', async (
   await page.getByRole('button', { name: 'Create list' }).click()
   await expect(page.getByLabel('Watchlist', { exact: true })).toContainText('File imports')
   await page.getByRole('button', { name: 'Import symbols' }).click()
-  await page
-    .getByLabel('Watchlist CSV')
-    .setInputFiles({
-      name: 'mine.csv',
-      mimeType: 'text/csv',
-      buffer: Buffer.from('Symbol\nNVDA\nMSFT\n'),
-    })
+  await page.getByLabel('Watchlist CSV').setInputFiles({
+    name: 'mine.csv',
+    mimeType: 'text/csv',
+    buffer: Buffer.from('Symbol\nNVDA\nMSFT\n'),
+  })
   await expect(page.getByText('2 added, 0 already on this list.')).toBeVisible()
   await expect(page.getByRole('button', { name: 'MSFT', exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Portfolio', exact: true }).click()
   await page.getByRole('button', { name: 'Import statement' }).click()
   const modal = page.getByRole('dialog')
-  await modal
-    .getByLabel('Positions statement')
-    .setInputFiles({
-      name: 'positions.csv',
-      mimeType: 'text/csv',
-      buffer: Buffer.from(
-        'Account Number,Account Name,Symbol,Description,Quantity,Last Price,Current Value,Cost Basis Total\nTEST12349870,Retirement,NVDA,NVIDIA,2,100,200,150\n',
-      ),
-    })
+  await modal.getByLabel('Positions statement').setInputFiles({
+    name: 'positions.csv',
+    mimeType: 'text/csv',
+    buffer: Buffer.from(
+      'Account Number,Account Name,Symbol,Description,Quantity,Last Price,Current Value,Cost Basis Total\nTEST12349870,Retirement,NVDA,NVIDIA,2,100,200,150\n',
+    ),
+  })
   await modal.getByRole('button', { name: 'Preview statement' }).click()
   await expect(modal.getByText(/Retirement ··9870/)).toBeVisible()
   await modal.getByRole('button', { name: 'Apply reviewed statement' }).click()
@@ -110,15 +117,13 @@ test('watchlist file, local Fidelity holdings and imported daily chart', async (
   await expect(page.getByRole('button', { name: 'Edit NVDA' })).toBeVisible()
   await page.getByText('Imported price history', { exact: true }).click()
   await page.getByLabel('Price file ticker').fill('MYDATA')
-  await page
-    .getByLabel('Daily price CSV')
-    .setInputFiles({
-      name: 'prices.csv',
-      mimeType: 'text/csv',
-      buffer: Buffer.from(
-        'Date,Open,High,Low,Close,Adj Close,Volume\n2025-02-03,12,14,10,13,13,122\n2025-02-04,13,16,11,15,15,120\n',
-      ),
-    })
+  await page.getByLabel('Daily price CSV').setInputFiles({
+    name: 'prices.csv',
+    mimeType: 'text/csv',
+    buffer: Buffer.from(
+      'Date,Open,High,Low,Close,Adj Close,Volume\n2025-02-03,12,14,10,13,13,122\n2025-02-04,13,16,11,15,15,120\n',
+    ),
+  })
   await page.getByRole('button', { name: 'Import prices' }).click()
   await expect(page.getByRole('img', { name: 'MYDATA historical adjusted prices' })).toBeVisible()
 })

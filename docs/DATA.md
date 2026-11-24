@@ -10,7 +10,7 @@ Stock Analysis supplies its publicly visible firm ratings, consensus, analyst co
 
 ## OpenAI assessments
 
-The selected model considers available observations for the stock, its sector ETF, the S&P 500 proxy, volatility, Treasury yields and dated company, sector and market news. Company inputs can include historical annualized volatility, maximum drawdown, beta, published ISS governance risk, earnings estimates and analyst targets. News carries the publisher’s title, available excerpt, publication time and original link. Recent news uses a rolling 30-day window. [Federal Reserve news](https://www.federalreserve.gov/newsevents.htm)
+The selected model considers available observations for the stock, its sector ETF, the S&P 500 proxy, volatility, Treasury yields and dated company, sector and market news. Company inputs can include historical annualized volatility, maximum drawdown, beta, published ISS governance risk, earnings estimates and analyst targets. News carries the publisher’s title, available excerpt, publication time and original link. Recent news uses a rolling 30-day window. Assessments select dated observations across each available category. If the API rejects a request for its size, the app retries with fewer observations and shorter excerpts. The original source URLs remain attached to saved citations. [Federal Reserve news](https://www.federalreserve.gov/newsevents.htm)
 
 Historical volatility uses the sample standard deviation of daily log returns, annualized by the square root of 252. Maximum drawdown measures the largest peak-to-subsequent-trough decline in the observed window. ISS governance risk is on the publisher’s scale of 1 (low) to 10 (high). Analyst targets use the publisher’s reported figures.
 

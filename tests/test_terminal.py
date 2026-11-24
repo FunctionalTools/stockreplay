@@ -363,6 +363,39 @@ def test_retries_incomplete_output(client):
     assert len(budgets) == 2 and budgets[1] > budgets[0]
 
 
+def test_oversized_scoring_request_retries_with_less_evidence(client, monkeypatch):
+    from tests.provider_fixture import assessment, completed
+
+    source = brief()
+    news = source["evidence"][1]
+    source["evidence"].extend([{**news, "id": str(i), "excerpt": "a" * 450} for i in range(10)])
+    monkeypatch.setattr(client.app.state.terminal.desk, "briefing", lambda s: source)
+    requests = []
+
+    def intercepted(req):
+        body = json.loads(req.content)
+        if body["text"]["format"]["name"] == "connection_check":
+            return completed({"result": "ready"})
+        inputs = json.loads(body["input"])
+        requests.append((len(inputs["evidence"]), body["max_output_tokens"]))
+        if len(requests) == 1:
+            return httpx.Response(
+                429,
+                json={
+                    "error": {
+                        "code": "rate_limit_exceeded",
+                        "message": "Request too large for tokens per min",
+                    }
+                },
+            )
+        return completed(assessment(inputs))
+
+    client.app.state.terminal.openai.transport = httpx.MockTransport(intercepted)
+    assert client.put("/api/openai", json={"key": "intercepted-dummy-value"}).is_success
+    assert client.post("/api/desk/recommend/NVDA").json()["buy_score"] == 72
+    assert len(requests) == 2 and all(a > b for a, b in zip(requests[0], requests[1]))
+
+
 def test_watch_import_and_preferences(client):
     p = "/api/watchlists/default/import"
     assert client.post(p, json={"content": "Symbol,Notes\nMSFT,one\nNVDA,two"}).json()["added"] == 2

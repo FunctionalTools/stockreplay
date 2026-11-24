@@ -5,7 +5,7 @@ from typing import Literal
 from fastapi import HTTPException
 from pydantic import Field
 from .schema import Model
-from .openai_research import choices, object_schema, array
+from .openai_research import choices, object_schema, array, indexed_evidence
 from .store import now
 
 PAGES = ("Research", "Watchlists", "Portfolio", "Settings")
@@ -140,7 +140,7 @@ def plan(gateway, chat):
 def research_question(gateway, brief, question):
     reject_key(question)
     key, model = gateway.credentials()
-    items = {f"S{i + 1}": e for i, e in enumerate(brief["evidence"])}
+    items = indexed_evidence(brief["evidence"])
     if not items:
         raise ValueError("No dated public sources are available for this stock.")
     schema = object_schema({"answer": STRING, "citations": array(choices(*items))})

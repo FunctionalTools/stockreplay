@@ -66,6 +66,19 @@ def respond(request):
             {"create_list": {"name": "Chat list"}},
             {"watch": {"name": "Chat list", "symbol": "MSFT"}},
         ]
+    elif "alert" in msg:
+        actions = [
+            {
+                "alert": {
+                    "mode": "create",
+                    "symbol": inputs["symbol"],
+                    "direction": "above",
+                    "threshold": 25,
+                }
+            }
+        ]
+    elif "save my chart" in msg:
+        actions = [{"chart_control": {"symbol": inputs["symbol"], "command": "save"}}]
     elif "allocation" in msg:
         actions = [{"portfolio": {"view": "allocation"}}]
     elif "risk" in msg:

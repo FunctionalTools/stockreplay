@@ -406,6 +406,7 @@ export function Research({
     [watch, setWatch] = useState(false),
     [listId, choose] = useState(''),
     [revision, refresh] = useState(0),
+    [layoutRevision, refreshLayout] = useState(0),
     [selected, setSelected] = useState(''),
     [adv, setAdv] = useState(advanced)
   const prices = usePrices([symbol], span, '', revision),
@@ -418,6 +419,9 @@ export function Research({
     b = eb.data
   const focus = useRef<HTMLElement | null>(null)
   useEffect(() => setAdv(advanced), [advanced])
+  useEffect(() => {
+    if (intent.kind === 'layout_saved') refreshLayout(intent.seq)
+  }, [intent.kind, intent.seq])
   const readHistory = history.reload,
     readLists = lists.reload
   useEffect(() => {
@@ -430,11 +434,13 @@ export function Research({
     if (!intent.seq) return
     if (
       intent.kind.startsWith('control_') ||
-      ['news', 'ratings', 'scores', 'tools', 'box', 'trend', 'horizontal'].includes(intent.kind)
+      ['news', 'ratings', 'scores', 'layout_saved', 'tools', 'box', 'trend', 'horizontal'].includes(
+        intent.kind,
+      )
     ) {
       const isTool =
         intent.kind.startsWith('control_') ||
-        ['tools', 'box', 'horizontal', 'trend'].includes(intent.kind)
+        ['layout_saved', 'tools', 'box', 'horizontal', 'trend'].includes(intent.kind)
       if (isTool) setAdv(true)
       const id = requestAnimationFrame(() =>
         document.getElementById(isTool ? 'tools' : intent.kind)?.scrollIntoView({ block: 'start' }),
@@ -671,7 +677,7 @@ export function Research({
         </div>
         {adv && (
           <ChartDesk
-            key={symbol + ':' + updateSeq + ':' + (intent.kind === 'tools' ? intent.seq : '')}
+            key={symbol + ':' + layoutRevision}
             symbol={symbol}
             control={intent}
             initialTool={['box', 'trend', 'horizontal'].includes(intent.kind) ? intent.kind : ''}
