@@ -1,5 +1,12 @@
 name: macOS verification
-on: [push, workflow_dispatch]
+on:
+  push:
+  workflow_dispatch:
+    inputs:
+      live_providers:
+        description: Verify current public providers and the live TradingView frame
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
@@ -31,6 +38,7 @@ jobs:
         env:
           STOCKREPLAY_BROWSER: webkit
         run: |
+          export PLAYWRIGHT_BROWSERS_PATH="$PWD/../.local/browsers"
           ./node_modules/.bin/playwright install webkit
           npm run e2e -- terminal.spec.ts
       - name: Verify local service lifecycle
@@ -38,3 +46,11 @@ jobs:
           ./start.sh
           curl --fail http://127.0.0.1:8765/api/health
           ./stop.sh
+      - name: Verify current public sources on macOS
+        if: github.event_name == 'workflow_dispatch' && inputs.live_providers
+        env:
+          STOCKREPLAY_PUBLIC_LIVE: "1"
+          STOCKREPLAY_LIVE_TESTS: "1"
+        run: |
+          .venv/bin/python -m pytest -q -s tests/test_terminal.py -k live_public_sources
+          npm --prefix frontend run e2e -- terminal.spec.ts --grep "native chart studies|public research"

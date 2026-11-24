@@ -1,6 +1,7 @@
 """Financial data boundaries, persistent account operations and provider contracts."""
 
 import json
+import os
 import sys
 from datetime import date
 from pathlib import Path
@@ -326,3 +327,15 @@ def test_native_keychain_lifecycle(tmp_path, monkeypatch):
         assert kc.get_password(research.SERVICE, client.account) is None
     finally:
         subprocess.run(["security", "delete-keychain", path], check=True)
+
+
+@pytest.mark.skipif(os.getenv("STOCKREPLAY_PUBLIC_LIVE") != "1", reason="opt in to current public providers")
+def test_live_public_sources(client):
+    chart=client.get("/api/desk/chart/NVDA?interval=1d&span=2y").json()
+    assert chart["data"]["as_of"]==latest_session().isoformat() and chart["data"]["currency"]=="USD"
+    r=client.get("/api/desk/ratings/NVDA").json()
+    assert r["stockreplay"] and r["actions"]["data"] and r["nasdaq"]["data"] and r["stockanalysis"]["data"]
+    b=client.get("/api/desk/brief/NVDA").json()
+    assert b["current_context"] and b["current_prices"]
+    assert {"company_news","sector_news","market","price"}<={x["group"] for x in b["evidence"]}
+    print(f"NVDA through {b['as_of']}: {len(b['evidence'])} evidence items, {len(r['actions']['data'])} Yahoo actions and {len(r['stockanalysis']['data'])} Stock Analysis disclosures.")
