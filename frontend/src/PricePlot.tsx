@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import { api, errorText, pct } from './types'
 import { Busy, ErrorBox } from './ui'
-import { SourceLink, type Packet } from './deskCommon'
+import { SourceLink, useResource, type Packet } from './deskCommon'
 import { amount, shortDay } from './workspace'
 export type Prices = {
   symbol: string
@@ -248,7 +248,26 @@ export function PricePlot({ series, compact = false }: { series: Prices[]; compa
     </figure>
   )
 }
-export function ChatGraph({ symbols, span }: { symbols: string[]; span: string }) {
+type GraphRequest = { symbols: string[]; span: string; snapshot?: string }
+export function ChatGraph({ snapshot, ...request }: GraphRequest) {
+  return snapshot ? <CapturedGraph snapshot={snapshot} {...request} /> : <LiveGraph {...request} />
+}
+function CapturedGraph({ snapshot, symbols, span }: GraphRequest) {
+  const { data, error, loading } = useResource<{ series: Prices[]; errors: string[] }>(
+    '/assistant/charts/' + encodeURIComponent(snapshot!),
+  )
+  return (
+    <div className="chat-graph">
+      <strong>
+        {symbols.join(' / ')} · {span}
+      </strong>
+      {loading && <Busy text="Opening saved chart" />}
+      <ErrorBox text={error || data?.errors.join(' ') || ''} />
+      {data && <PricePlot series={data.series} compact />}
+    </div>
+  )
+}
+function LiveGraph({ symbols, span }: GraphRequest) {
   const p = usePrices(symbols, span)
   return (
     <div className="chat-graph">

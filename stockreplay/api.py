@@ -27,6 +27,7 @@ from .schema import (
     SavedRun,
 )
 from .store import Store
+from .reading_list import register_reading_list
 from .terminal_api import register
 from fastapi.exceptions import RequestValidationError
 
@@ -320,6 +321,7 @@ def create_app(root=None):
         raise KeyError("Unknown export format.")
 
     register(app, db)
+    register_reading_list(app, db)
     dist = Path(__file__).resolve().parents[1] / "frontend" / "dist"
     if dist.is_dir():
         app.mount("/", StaticFiles(directory=dist, html=True), name="terminal")

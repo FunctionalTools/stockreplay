@@ -3,9 +3,7 @@ import {
   ArrowDownRight,
   ArrowUpRight,
   BookmarkPlus,
-  Check,
   ChevronRight,
-  Newspaper,
   RefreshCw,
   Shield,
   SlidersHorizontal,
@@ -17,6 +15,8 @@ import { useResource, SourceLink } from './deskCommon'
 import { Busy, ErrorBox, Modal } from './ui'
 import { PricePlot, usePrices } from './PricePlot'
 import { ChartDesk } from './ChartDesk'
+import { NewsPreviews } from './NewsPreviews'
+import { OpenSavedArticles, SavedArticlesMenu } from './SavedArticles'
 import {
   amount,
   shortDay,
@@ -312,7 +312,7 @@ function News({ b, opinion }: { b: Brief; opinion: Opinion | null }) {
   const [filter, set] = useState('All'),
     [limit, show] = useState(6)
   const cited = new Set(opinion?.sources.map((s) => s.url))
-  const items = b.evidence
+  const items = (filter === 'Used in scores' && opinion ? opinion.sources : b.evidence)
     .filter((s) => s.group.endsWith('_news'))
     .sort((a, b) => b.date.localeCompare(a.date))
   const choices = ['All', 'Company', 'Sector', 'Market', 'Used in scores']
@@ -329,7 +329,7 @@ function News({ b, opinion }: { b: Brief; opinion: Opinion | null }) {
     <section id="news" className="section-anchor">
       <div className="section-title">
         <h2>News behind the numbers</h2>
-        <Newspaper size={20} />
+        <SavedArticlesMenu />
       </div>
       <div className="chips">
         {choices.map((v) => (
@@ -346,25 +346,7 @@ function News({ b, opinion }: { b: Brief; opinion: Opinion | null }) {
           </button>
         ))}
       </div>
-      <div className="news-grid">
-        {rows.slice(0, limit).map((n) => (
-          <article className="panel story" key={n.id}>
-            <small>
-              {n.source} · {shortDay(n.date)}
-            </small>
-            <h3>{n.text}</h3>
-            {n.excerpt && <p>{n.excerpt}</p>}
-            <footer>
-              <SourceLink url={n.url}>Read article</SourceLink>
-              {cited.has(n.url) && (
-                <small>
-                  <Check size={12} /> Used in scores
-                </small>
-              )}
-            </footer>
-          </article>
-        ))}
-      </div>
+      <NewsPreviews items={rows} limit={limit} citedUrls={[...cited]} />
       {!rows.length && (
         <p className="muted">
           No recent articles in this selection. Citations from a saved assessment stay with its
@@ -434,16 +416,28 @@ export function Research({
     if (!intent.seq) return
     if (
       intent.kind.startsWith('control_') ||
-      ['news', 'ratings', 'scores', 'layout_saved', 'tools', 'box', 'trend', 'horizontal'].includes(
-        intent.kind,
-      )
+      [
+        'news',
+        'saved-articles',
+        'ratings',
+        'scores',
+        'layout_saved',
+        'tools',
+        'box',
+        'trend',
+        'horizontal',
+      ].includes(intent.kind)
     ) {
       const isTool =
         intent.kind.startsWith('control_') ||
         ['layout_saved', 'tools', 'box', 'horizontal', 'trend'].includes(intent.kind)
       if (isTool) setAdv(true)
       const id = requestAnimationFrame(() =>
-        document.getElementById(isTool ? 'tools' : intent.kind)?.scrollIntoView({ block: 'start' }),
+        document
+          .getElementById(
+            isTool ? 'tools' : intent.kind === 'saved-articles' ? 'news' : intent.kind,
+          )
+          ?.scrollIntoView({ block: 'start' }),
       )
       return () => cancelAnimationFrame(id)
     }
@@ -475,6 +469,7 @@ export function Research({
   }
   return (
     <div className="research">
+      <OpenSavedArticles request={intent.kind === 'saved-articles' ? intent.seq : undefined} />
       <div className="page-head">
         <div>
           <div className="kicker">
@@ -621,8 +616,8 @@ export function Research({
       )}
       {b && (
         <>
-          <ExternalRatings b={b} symbol={symbol} />
           <News b={b} opinion={o} />
+          <ExternalRatings b={b} symbol={symbol} />
           <details className="panel evidence-detail">
             <summary>Company risk and financial estimates</summary>
             <div className="metrics">

@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { Building2, FileUp, Plus, Pencil, Trash2 } from 'lucide-react'
+import { Building2, BookOpen, FileUp, Plus, Pencil, Trash2 } from 'lucide-react'
+import { PortfolioImportGuide } from './PortfolioImportGuide'
 import { api, errorText } from './types'
 import { Modal, Field, Empty, ErrorBox, Busy } from './ui'
 import { PageHead, useResource, fmt, when, type Packet } from './deskCommon'
@@ -59,9 +60,17 @@ function totals(positions: Position[]) {
     if (p.value !== null) sums.set(p.currency, (sums.get(p.currency) || 0) + p.value)
   return [...sums]
 }
-function StatementImport({ close, done }: { close: () => void; done: () => void }) {
+function StatementImport({
+  close,
+  done,
+  initialInstitution,
+}: {
+  close: () => void
+  done: () => void
+  initialInstitution: string
+}) {
   const [content, setContent] = useState(''),
-    [institution, setInstitution] = useState('Fidelity'),
+    [institution, setInstitution] = useState(initialInstitution),
     [account, setAccount] = useState(''),
     [date, setDate] = useState(''),
     [currency, setCurrency] = useState('USD'),
@@ -106,18 +115,12 @@ function StatementImport({ close, done }: { close: () => void; done: () => void 
   return (
     <Modal title="Import a holdings statement" wide close={close}>
       <div className="modal-body stack">
-        <p>
-          From Fidelity, open Positions and download the CSV. Other institutions can supply a
-          positions CSV, OFX or QFX statement. The file is read by your local StockReplay service.
-        </p>
-        <a
-          className="source-link"
-          href="https://www.fidelity.com/webxpress/help/topics/learn_portfolio_positions.shtml"
-          target="_blank"
-          rel="noreferrer"
-        >
-          Fidelity positions help ↗
-        </a>
+        <details className="import-instructions">
+          <summary>
+            <BookOpen size={15} aria-hidden="true" /> How to import your portfolio
+          </summary>
+          <PortfolioImportGuide />
+        </details>
         <form
           className="desk-form"
           onSubmit={(e) => {
@@ -238,6 +241,7 @@ function StatementImport({ close, done }: { close: () => void; done: () => void 
                           <th>Quantity</th>
                           <th>Value</th>
                           <th>Currency</th>
+                          <th>Statement date</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -247,6 +251,7 @@ function StatementImport({ close, done }: { close: () => void; done: () => void 
                             <td>{fmt(p.quantity, 6)}</td>
                             <td>{fmt(p.value)}</td>
                             <td>{p.currency}</td>
+                            <td>{when(p.as_of)}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -334,6 +339,8 @@ function PositionForm({
 export function HoldingsPage({ initialAction = '' }: { initialAction?: string }) {
   const data = useResource<Account[]>('/holdings'),
     [importing, setImport] = useState(false),
+    [guideOpen, setGuideOpen] = useState(initialAction === 'import-guide'),
+    [initialInstitution, setInitialInstitution] = useState('Fidelity'),
     [adding, setAdding] = useState(false),
     [edit, setEdit] = useState<{ a: Account; p: Position } | null>(null),
     [error, setErr] = useState(''),
@@ -342,8 +349,14 @@ export function HoldingsPage({ initialAction = '' }: { initialAction?: string })
     [message, show] = useState('')
   useEffect(() => {
     if (initialAction === 'holdings') setImport(true)
+    if (initialAction === 'import-guide') setGuideOpen(true)
     if (initialAction === 'account') setAdding(true)
   }, [initialAction])
+  function openStatement(institution = 'Fidelity') {
+    setGuideOpen(false)
+    setInitialInstitution(institution)
+    setImport(true)
+  }
   const all = (data.data || []).flatMap((a) => a.positions),
     missing = all.filter((p) => p.value == null).length
   const saved = () => {
@@ -399,7 +412,7 @@ export function HoldingsPage({ initialAction = '' }: { initialAction?: string })
         title="Portfolio"
         description="Keep your investments and bank balances together on this Mac."
       >
-        <button className="btn primary" onClick={() => setImport(true)}>
+        <button className="btn primary" onClick={() => openStatement()}>
           <FileUp size={15} />
           Import statement
         </button>
@@ -409,7 +422,9 @@ export function HoldingsPage({ initialAction = '' }: { initialAction?: string })
           <Plus size={14} />
           Add account
         </button>
-        <small>Statement values stay dated to the supplied snapshot.</small>
+        <button className="btn" onClick={() => setGuideOpen(true)}>
+          <BookOpen size={15} /> Import guide
+        </button>
       </div>
       <ErrorBox text={error || data.error} />
       {message && <p role="status">{message}</p>}
@@ -538,7 +553,20 @@ export function HoldingsPage({ initialAction = '' }: { initialAction?: string })
         Get quote requests that symbol’s public market price. Account names, balances, quantities
         and cost basis stay local. Imports refresh when you apply a new statement.
       </p>
-      {importing && <StatementImport close={() => setImport(false)} done={saved} />}{' '}
+      {guideOpen && (
+        <Modal title="Portfolio import guide" wide close={() => setGuideOpen(false)}>
+          <div className="modal-body">
+            <PortfolioImportGuide onImport={openStatement} />
+          </div>
+        </Modal>
+      )}
+      {importing && (
+        <StatementImport
+          initialInstitution={initialInstitution}
+          close={() => setImport(false)}
+          done={saved}
+        />
+      )}{' '}
       {adding && (
         <Modal title="Add local account" close={() => setAdding(false)}>
           <form className="modal-body stack" onSubmit={create}>

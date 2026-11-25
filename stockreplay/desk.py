@@ -15,6 +15,7 @@ import pandas as pd
 import yfinance as yf
 
 from .public_cache import PublicCache
+from .news_images import NewsImages, image_url
 from .trading_calendar import latest_session
 
 INTERVALS = {
@@ -325,6 +326,82 @@ def excerpt(value):
     return " ".join(BeautifulSoup(str(value or ""), "html.parser").stripped_strings)[:480]
 
 
+MEDIA = "{http://search.yahoo.com/mrss/}"
+
+
+def article_preview(content):
+    thumbnail = content.get("thumbnail") or {}
+    if not isinstance(thumbnail, dict):
+        thumbnail = {}
+    sizes = (
+        list(thumbnail.get("resolutions") or [])
+        if isinstance(thumbnail.get("resolutions"), list)
+        else []
+    )
+    sizes.append(
+        {
+            "url": thumbnail.get("originalUrl"),
+            "width": thumbnail.get("originalWidth"),
+            "height": thumbnail.get("originalHeight"),
+        }
+    )
+    photos = []
+    for item in sizes:
+        if not isinstance(item, dict):
+            continue
+        url = image_url(item.get("url"))
+        width = number(item.get("width"))
+        height = number(item.get("height"))
+        if (
+            not url
+            or not width
+            or not height
+            or width < 128
+            or height < 72
+            or width * height > 12_000_000
+        ):
+            continue
+        # Favor a card-sized image, retaining a different publisher-supplied resolution if it fails.
+        rank = (
+            0 if 320 <= width <= 1600 else 1 if width > 1600 else 2,
+            abs(width - 720),
+        )
+        photos.append((rank, url))
+    authors = content.get("authors")
+    byline = content.get("byline")
+    if not isinstance(byline, str) and isinstance(authors, list):
+        byline = ", ".join(
+            name
+            for a in authors
+            if isinstance(a, dict)
+            and isinstance((name := a.get("displayName") or a.get("name")), str)
+        )
+    finance = content.get("finance")
+    premium = finance.get("premiumFinance") if isinstance(finance, dict) else None
+    return {
+        "images": list(dict.fromkeys(url for _, url in sorted(photos)))[:2],
+        "byline": excerpt(byline)[:160] if isinstance(byline, str) else None,
+        "format": "video" if content.get("contentType") == "VIDEO" else "article",
+        "subscription": isinstance(premium, dict) and premium.get("isPremiumNews") is True,
+    }
+
+
+def rss_preview(item):
+    images = []
+    for node in item.iter():
+        if node.tag == MEDIA + "thumbnail" or (
+            node.tag in (MEDIA + "content", "enclosure")
+            and (node.get("medium") == "image" or (node.get("type") or "").startswith("image/"))
+        ):
+            url = image_url(node.get("url"))
+            if url and url not in images:
+                images.append(url)
+    return {
+        "images": images[:2],
+        "byline": excerpt(item.findtext("{http://purl.org/dc/elements/1.1/}creator"))[:160] or None,
+    }
+
+
 def published(value):
     if not value:
         return None
@@ -347,6 +424,7 @@ def rss(url, category):
                 {
                     "title": title,
                     "excerpt": excerpt(item.findtext("description")),
+                    "preview": rss_preview(item),
                     "url": link,
                     "published": stamp,
                     "publisher": "Federal Reserve"
@@ -363,22 +441,34 @@ def stories(symbol, category):
         raw = yf.Ticker(symbol).get_news(count=25)
         out = []
         for item in raw:
+            if not isinstance(item, dict):
+                continue
             c = item.get("content") or item
-            url = safe_url(
-                (c.get("canonicalUrl") or {}).get("url")
-                or (c.get("clickThroughUrl") or {}).get("url")
-                or c.get("link")
+            if not isinstance(c, dict):
+                continue
+            links = [c.get("canonicalUrl"), c.get("clickThroughUrl"), c.get("link")]
+            url = next(
+                (
+                    u
+                    for link in links
+                    if (u := safe_url(link.get("url") if isinstance(link, dict) else link))
+                ),
+                None,
             )
+            provider = c.get("provider")
+            publisher = provider.get("displayName") if isinstance(provider, dict) else None
             stamp = published(c.get("pubDate") or c.get("displayTime"))
             if url and stamp and c.get("title"):
                 out.append(
                     {
                         "title": c["title"],
                         "excerpt": excerpt(c.get("summary") or c.get("description")),
+                        "preview": article_preview(c),
                         "url": url,
                         "published": stamp,
-                        "publisher": (c.get("provider") or {}).get("displayName")
-                        or urlsplit(url).hostname,
+                        "publisher": publisher
+                        if isinstance(publisher, str) and publisher.strip()
+                        else urlsplit(url).hostname,
                         "category": category,
                     }
                 )
@@ -473,6 +563,7 @@ def technical_rating(chart, benchmark):
 
 class Desk:
     def __init__(self, db):
+        self.photos = NewsImages(db)
         self.cache = PublicCache(db)
         self.db = db
 
@@ -542,7 +633,7 @@ class Desk:
         v = parallel(tasks)
         evidence = []
 
-        def add(group, text, url, date, source, excerpt=None):
+        def add(group, text, url, date, source, excerpt=None, preview=None):
             key = hashlib.sha256((group + str(url) + str(date) + text).encode()).hexdigest()[:14]
             evidence.append(
                 {
@@ -553,6 +644,7 @@ class Desk:
                     "date": date,
                     "source": source,
                     "excerpt": excerpt,
+                    **({"preview": preview} if preview else {}),
                 }
             )
 
@@ -741,7 +833,9 @@ class Desk:
                     item["published"],
                     item["publisher"],
                     item.get("excerpt"),
+                    item.get("preview"),
                 )
+        self.photos.attach(evidence)
         issues = [
             f"{key.replace('_', ' ')}: {value['error']}"
             for key, value in {

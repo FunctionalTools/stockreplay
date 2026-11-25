@@ -22,6 +22,12 @@ Accounts, statement values, quantities, cost basis, imports and watchlist groupi
 
 The key is used by the local backend for HTTPS requests to OpenAI. The session option keeps it in memory. Persistent storage uses macOS Keychain. The browser never receives a saved key when it requests connection status. Stock assessments send public evidence. The assistant sends the messages you enter, the active page and ticker. Local action results such as account balances are rendered on the Mac and excluded from subsequent prompts. StockReplay requests `store: false` from OpenAI. [OpenAI API data controls](https://platform.openai.com/docs/guides/your-data)
 
+## Saved conversations, articles and tabs
+
+Conversations are stored in the same local SQLite database as your portfolio. A conversation stores the displayed messages, action receipts, navigation targets, cited sources and local results so you can reopen it later. While a save is pending, a draft stays in local browser storage until the database acknowledges the write. OpenAI receives the recent conversational context and public research evidence needed for the request. Portfolio rows returned by a local action stay on the Mac. Chat price charts are saved as dated observations and can be reopened without a fresh quote.
+
+A custom tab stores its name, ordered sections, stock selections and notes. Market widgets on a tab read the latest available data when opened. A saved article stores its original URL, publisher, timestamp and supplied excerpt. StockReplay caches verified photos from the news feed’s supported media hosts on the Mac, up to 48 MiB. The browser displays a photo only after it decodes. Reading the full article opens the original publication.
+
 ## Attribution
 
 Advanced charts use TradingView Lightweight Charts™ v4.2.3, Copyright © TradingView, Inc., distributed under the Apache 2.0 License. Self-hosted DM Sans and IBM Plex Mono retain their upstream font licenses. [Lightweight Charts](https://www.tradingview.com/lightweight-charts/) · [Fontsource](https://fontsource.org/)

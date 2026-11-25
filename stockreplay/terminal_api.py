@@ -1,5 +1,7 @@
 import json
 import csv
+import hashlib
+import zlib
 import io
 import re
 import threading
@@ -12,10 +14,12 @@ from fastapi import APIRouter
 from pydantic import Field, field_validator
 
 from . import assistant
+from .chat_history import register_chat_history
 from .market import read_csv
-from .desk import Desk, INTERVALS, SCREENS, safe_url, screen
+from .desk import Desk, INTERVALS, SCREENS, parallel, safe_url, screen
 from .holdings import AccountInput, Holdings, Position, Statement
 from .openai_research import KeySettings, ModelLookup, OpenAIResearch
+from .custom_tabs import register_tabs
 from .schema import Model
 from .store import now
 
@@ -41,6 +45,11 @@ class Preferences(Model):
 
 class ListImport(Model):
     content: str = Field(min_length=1, max_length=1_000_000)
+
+
+class ChartCapture(Model):
+    symbols: list[str] = Field(min_length=1, max_length=4)
+    span: Literal["1mo", "6mo", "1y", "2y", "5y", "10y"]
 
 
 class ListName(Model):
@@ -111,6 +120,7 @@ class Terminal:
               create table if not exists watchlists(id text primary key,name text not null unique);
               create table if not exists watch_members(list_id text references watchlists(id) on delete cascade,symbol text not null,primary key(list_id,symbol));
               create table if not exists price_alerts(id text primary key,symbol text not null,direction text not null,threshold real not null,created text not null,triggered text,price real,observed integer);
+              create table if not exists chat_charts(id text primary key, captured text not null, payload blob not null);
               create table if not exists chart_layouts(symbol text primary key,payload text not null);
               create table if not exists market_recommendations(id text primary key, symbol text not null, created text not null,payload text not null);
               create index if not exists recommendations_by_symbol on market_recommendations(symbol,created);
@@ -223,6 +233,8 @@ def register(app, db):
 
     r = APIRouter(prefix="/api", lifespan=lifespan)
 
+    register_chat_history(r, db)
+
     defaults = {
         "appearance": "system",
         "accent": "forest",
@@ -290,6 +302,52 @@ def register(app, db):
             "currency": None,
             "url": None,
         }
+
+    @r.post("/assistant/charts")
+    def capture_chart(item: ChartCapture):
+        symbols = list(dict.fromkeys(ticker(s) for s in item.symbols))
+        packets = parallel({s: lambda s=s: t.desk.chart(s, "1d", item.span) for s in symbols})
+        series, errors = [], []
+        for symbol, packet in packets.items():
+            data = packet["data"]
+            if not data or not data["bars"]:
+                errors.append(f"{symbol} · {packet['error'] or 'Price history unavailable.'}")
+                continue
+            series.append(
+                {
+                    **{name: data[name] for name in ("symbol", "as_of", "currency", "url")},
+                    "source": data["source"] + (" (cached)" if packet["stale"] else ""),
+                    "bars": [
+                        {key: bar[key] for key in ("date", "time", "raw_close", "close")}
+                        for bar in data["bars"]
+                    ],
+                }
+            )
+        if not series:
+            raise ValueError(" ".join(errors))
+        raw = json.dumps(
+            {"series": series, "span": item.span, "errors": errors},
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode()
+        key = hashlib.sha256(raw).hexdigest()
+        t.update(
+            "insert or ignore into chat_charts values(?,?,?)",
+            (key, now(), zlib.compress(raw, 3)),
+        )
+        return {"id": key}
+
+    @r.get("/assistant/charts/{key}")
+    def saved_chart(key: str):
+        rows = t.query("select captured,payload from chat_charts where id=?", (key,))
+        if not rows:
+            raise KeyError("This saved chart is unavailable on this Mac.")
+        return {
+            "captured": rows[0]["captured"],
+            **json.loads(zlib.decompress(rows[0]["payload"])),
+        }
+
+    r.add_api_route("/news/images/{key}", t.desk.photos.response, methods=["GET"])
 
     @r.get("/desk/chart/{symbol}")
     def chart(symbol: str, interval: str = "1d", span: str = "2y", refresh: bool = False):
@@ -420,7 +478,8 @@ def register(app, db):
         first = next(rows, [])
         head = [v.strip().casefold() for v in first]
         col = next(
-            (i for i, v in enumerate(head) if v in {"ticker", "symbol", "ticker symbol"}), None
+            (i for i, v in enumerate(head) if v in {"ticker", "symbol", "ticker symbol"}),
+            None,
         )
         if col is None:
             if len(first) != 1:
@@ -532,4 +591,5 @@ def register(app, db):
     def remove_position(key: str, pid: str):
         return t.holdings.remove(key, pid)
 
+    register_tabs(r, db)
     app.include_router(r)

@@ -1,6 +1,6 @@
 # StockReplay for macOS
 
-StockReplay is a stock research website that runs on your Mac. Search a ticker to see its latest completed close, read the articles behind a stock assessment, and compare published analyst opinions. Your watchlists, portfolio statements, chart drawings and saved assessments live in a local SQLite database.
+StockReplay is a stock research website that runs on your Mac. Search a ticker to see its latest completed close, read the articles behind a stock assessment, and compare published analyst opinions. Your watchlists, portfolio statements, custom tabs, saved articles and assistant conversations live in a local SQLite database.
 
 ![StockReplay Research showing real NVIDIA price history and published analyst ratings](docs/screenshots/research.png)
 
@@ -31,7 +31,17 @@ If a request fails, the error identifies whether OpenAI rejected the key, restri
 - **Portfolio** imports current Fidelity and other brokerage or bank statements from CSV, OFX or QFX. Preview mapped positions before applying a statement, or enter accounts, holdings and balances manually. Import a separate daily price CSV to chart your own history.
 - **Settings** controls the starting stock, display mode, theme, advanced trader tools, API model and key storage.
 
-The assistant in the lower-right corner can create a watchlist, plot multiple stocks, answer a question with linked evidence, draw a chart annotation, change settings, or work with your portfolio. Try “Compare MSFT and AAPL over one year” or “Show my portfolio allocation.” Minimize it to keep working. Portfolio totals and graphs are assembled on your Mac. [Data, sources and privacy](docs/DATA.md)
+### Build a tab with the assistant
+
+Open the assistant in the lower-right corner and ask “Make a Chip stocks tab with a one-year NVDA and AMD comparison, NVIDIA news, and a note about earnings.” The assistant creates a named tab on your Mac. Open it again from **My tabs**. You can rename it, change its layout or ask the assistant to add another chart, news section or watchlist.
+
+Replies are short. Follow the in-app links to go directly to a stock, a workspace tab or the portfolio import guide. Open the history menu inside the assistant to resume a conversation or start a new one. Saved conversations retain their sources, results, links and charts. Price charts created in chat keep the prices observed when they were drawn, including when you reopen them offline. [See the assistant](docs/screenshots/assistant.png)
+
+### Preview news and import a portfolio
+
+Research shows publisher photos when they load and offers an in-app preview when the publisher supplies an excerpt. The original article is linked beneath its preview. Bookmark an article to keep its headline, source, publication date, excerpt and link on your Mac. [See an article preview](docs/screenshots/article-preview.png)
+
+In Portfolio, open the import guide and choose Fidelity, another brokerage or a bank. The guide explains how to export positions or balances, map unfamiliar columns, and review an import before saving it. A blank CSV template is available for statements you prepare yourself. [Data, sources and privacy](docs/DATA.md)
 
 ## Verification
 

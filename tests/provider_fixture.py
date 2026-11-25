@@ -61,7 +61,18 @@ def respond(request):
         )
     assert name == "app_assistant"
     msg = inputs["messages"][-1]["text"].lower()
-    if "watchlist" in msg:
+    if "chip stocks tab" in msg:
+        actions = [
+            {
+                "tab": {
+                    "operation": "create",
+                    "name": "Chip stocks",
+                    "value": "",
+                    "blocks": [{"view": "chart", "value": "NVDA,AMD", "span": "1y"}],
+                }
+            }
+        ]
+    elif "watchlist" in msg:
         actions = [
             {"create_list": {"name": "Chat list"}},
             {"watch": {"name": "Chat list", "symbol": "MSFT"}},
@@ -87,7 +98,7 @@ def respond(request):
         actions = [{"appearance": {"mode": "dark"}}]
     else:
         actions = [{"chart": {"symbols": ["NVDA", "MSFT"], "span": "1y"}}]
-    return completed({"reply": "Here is the requested action.", "actions": actions})
+    return completed({"reply": "Here is the requested action.", "actions": actions, "links": []})
 
 
 def install_market():

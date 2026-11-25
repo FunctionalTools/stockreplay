@@ -1,9 +1,21 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowUp, MessageCircle, Minus, Sparkles } from 'lucide-react'
+import {
+  ArrowUp,
+  MessageCircle,
+  Minus,
+  Sparkles,
+  History,
+  SquarePen,
+  ChevronLeft,
+  Pencil,
+  Trash2,
+} from 'lucide-react'
 import { api, errorText } from './types'
 import { Busy, ErrorBox } from './ui'
-import { SourceLink } from './deskCommon'
-import { ChatGraph } from './PricePlot'
+import { useChatHistory, type ChatLink, type Entry, type Context } from './chatHistory'
+import { ChatMessage, ChatAnchor, linkUrl } from './ChatMessage'
+import { executeTabAction, isTabAction, prepareTabDelete } from './customTabs'
+import './assistant.css'
 import {
   type Connection,
   type Opinion,
@@ -11,10 +23,9 @@ import {
   type Preferences,
   type SavedList,
   type Source,
-  amount,
   tickerPattern,
 } from './workspace'
-type Action = {
+export type Action = {
   kind: string
   shape?: string
   start_date?: string
@@ -38,7 +49,7 @@ type Action = {
   account?: string
   quantity?: number | null
   price?: number | null
-  value?: number | null
+  value?: number | string | null
   basis?: number | null
   currency?: string
   date?: string
@@ -64,51 +75,176 @@ type Position = {
   as_of: string | null
 }
 type Account = { id: string; name: string; institution: string; positions: Position[] }
-type Row = { name: string; currency: string; value: number | null; quantity?: number | null }
-type Entry = {
-  role: 'user' | 'assistant'
-  text: string
-  graph?: { symbols: string[]; span: string }
-  rows?: Row[]
-  allocation?: boolean
-  sources?: Source[]
-  confirmation?: { action: Action; pending: boolean }
-  id: number
-}
 type Props = {
   page: Page
   symbol: string
+  openTab: (id: string) => void
+  currentTab?: string
   connection: Connection | null
   navigate: (page: Page, symbol?: string, focus?: string) => void
   save: (v: Partial<Preferences>) => Promise<void>
   updated: () => void
   connected: (v: Connection) => void
 }
-export function Assistant({ page, symbol, connection, navigate, save, updated, connected }: Props) {
+export function Assistant({
+  page,
+  symbol,
+  connection,
+  navigate,
+  save,
+  updated,
+  connected,
+  openTab,
+  currentTab,
+}: Props) {
   const [open, setOpen] = useState(false),
     [input, type] = useState(''),
     [busy, wait] = useState(false),
     [error, fail] = useState(''),
-    [entries, set] = useState<Entry[]>([])
-  const seq = useRef(0),
-    bottom = useRef<HTMLDivElement>(null),
+    [menu, setMenu] = useState(false),
+    [rename, setRename] = useState<string | null>(null),
+    [deleting, setDeleting] = useState(false),
+    [limit, setLimit] = useState(20)
+  const history = useChatHistory(),
+    entries = history.chat?.entries || [],
+    locked = busy || history.loading
+  const body = useRef<HTMLDivElement>(null),
     field = useRef<HTMLInputElement>(null),
     launcher = useRef<HTMLButtonElement>(null),
-    requestLock = useRef(false),
-    context = useRef<{ role: 'user' | 'assistant'; text: string }[]>([])
+    requestLock = useRef(false)
   useEffect(() => {
-    if (open) {
-      bottom.current?.scrollIntoView({ block: 'nearest' })
+    if (open && !menu) {
+      body.current?.scrollTo({ top: body.current.scrollHeight })
       field.current?.focus({ preventScroll: true })
     }
-  }, [open, entries, busy])
+  }, [open, menu, history.chat?.id, entries.length, busy])
   function minimize() {
     setOpen(false)
     launcher.current?.focus()
   }
-  function append(e: Omit<Entry, 'id' | 'role'> & { role?: Entry['role'] }) {
-    const entry = { role: 'assistant' as const, ...e, id: ++seq.current }
-    set((v) => [...v, entry])
+  function follow(link: ChatLink) {
+    if (!linkUrl(link, symbol)) return
+    if (link.tab) openTab(link.tab)
+    else navigate(link.page, link.symbol || symbol, link.focus)
+    minimize()
+  }
+  useEffect(() => {
+    const reveal = () => {
+      setOpen(true)
+      if (!requestLock.current) {
+        setMenu(true)
+        setRename(null)
+        setDeleting(false)
+        void history.init()
+        void history.refresh().catch((e) => fail(errorText(e)))
+      }
+    }
+    window.addEventListener('stockreplay:chat-history', reveal)
+    return () => window.removeEventListener('stockreplay:chat-history', reveal)
+  }, [history.init, history.refresh])
+  const { append } = history
+  const portfolioGuide: ChatLink = {
+    label: 'Portfolio import guide',
+    page: 'Portfolio',
+    focus: 'import-guide',
+    symbol,
+  }
+  const settingsLink: ChatLink = { label: 'Open API settings', page: 'Settings', symbol }
+  function target(a: Action): ChatLink | undefined {
+    const ticker = a.symbol || symbol
+    if (a.kind === 'navigate' && a.page) return { label: 'Open ' + a.page, page: a.page, symbol }
+    if (a.kind === 'import') {
+      const watch = a.file_type === 'watchlist'
+      return {
+        label: 'Open import',
+        page: watch ? 'Watchlists' : 'Portfolio',
+        focus: a.file_type,
+        symbol,
+      }
+    }
+    if (
+      ['portfolio', 'portfolio_quote', 'add_account', 'delete_account', 'position'].includes(a.kind)
+    )
+      return { page: 'Portfolio', label: 'View portfolio', symbol }
+    if (
+      [
+        'alerts',
+        'alert',
+        'watchlists',
+        'create_list',
+        'rename_list',
+        'delete_list',
+        'watch',
+        'unwatch',
+      ].includes(a.kind)
+    )
+      return { page: 'Watchlists', label: 'View watchlists', symbol }
+    if (['appearance', 'accent', 'advanced', 'home_stock', 'model'].includes(a.kind))
+      return settingsLink
+    if (
+      [
+        'research',
+        'open_stock',
+        'news',
+        'ratings',
+        'drawing',
+        'chart_tools',
+        'chart_layout',
+        'chart_control',
+        'chart',
+        'score',
+      ].includes(a.kind)
+    ) {
+      const section = ['news', 'ratings'].includes(a.kind)
+        ? a.kind
+        : a.kind === 'score'
+          ? 'scores'
+          : a.kind.startsWith('chart_') || a.kind === 'drawing'
+            ? 'tools'
+            : ''
+      return {
+        page: 'Research',
+        label:
+          section === 'tools'
+            ? 'Open chart tools'
+            : section
+              ? 'View ' + section
+              : 'Research ' + (a.symbols?.[0] || ticker),
+        symbol: a.symbols?.[0] || ticker,
+        focus: section,
+      }
+    }
+  }
+  async function navigateHistory(id: string | null) {
+    if (requestLock.current || history.loading) return
+    requestLock.current = true
+    try {
+      await history.open(id)
+      setMenu(false)
+      setLimit(20)
+      setRename(null)
+      setDeleting(false)
+      type('')
+      fail('')
+    } catch (e) {
+      fail(errorText(e))
+    } finally {
+      requestLock.current = false
+    }
+  }
+  async function manage(task: () => Promise<unknown>) {
+    if (requestLock.current || history.loading) return
+    requestLock.current = true
+    wait(true)
+    fail('')
+    try {
+      await task()
+    } catch (e) {
+      fail(errorText(e))
+    } finally {
+      requestLock.current = false
+      wait(false)
+    }
   }
   function stock(raw?: string) {
     const v = (raw || symbol).trim().toUpperCase()
@@ -127,16 +263,27 @@ export function Assistant({ page, symbol, connection, navigate, save, updated, c
       )
     return hits[0]
   }
-  async function execute(a: Action, confirmed = false): Promise<void> {
-    const text = (s: string) => append({ text: s }),
+  async function execute(a: Action, confirmed = false, suggested: ChatLink[] = []): Promise<void> {
+    const link = target(a),
+      links = [...(link ? [link] : []), ...suggested]
+    const text = (s: string) => append({ text: s, links }),
       enc = encodeURIComponent
     if (
       !confirmed &&
-      (['delete_list', 'delete_account', 'unwatch'].includes(a.kind) ||
+      ((isTabAction(a) && a.operation === 'delete') ||
+        ['delete_list', 'delete_account', 'unwatch'].includes(a.kind) ||
         (a.kind === 'position' && a.mode !== 'add') ||
         (a.kind === 'alert' && a.mode === 'remove'))
     ) {
-      append({
+      if (isTabAction(a) && a.operation === 'delete') {
+        const bound = await prepareTabDelete(a, currentTab)
+        await append({
+          text: 'Delete “' + bound.name + '” from this Mac?',
+          confirmation: { action: bound, pending: true },
+        })
+        return
+      }
+      await append({
         text:
           'Apply this change? ' +
           [
@@ -152,23 +299,35 @@ export function Assistant({ page, symbol, connection, navigate, save, updated, c
       })
       return
     }
+    if (isTabAction(a)) {
+      const result = await executeTabAction(a, openTab, updated, currentTab)
+      await append({
+        text: result.text,
+        links: result.tab
+          ? [{ page: 'Research', tab: result.tab.id, label: result.tab.title }]
+          : [],
+      })
+      return
+    }
     if (a.kind === 'navigate') {
       if (!a.page || !['Research', 'Watchlists', 'Portfolio', 'Settings'].includes(a.page))
         throw Error('Unknown page.')
       navigate(a.page)
-      text('Opened ' + a.page + '.')
+      await text('Opened ' + a.page + '.')
       return
     }
     if (['open_stock', 'ratings', 'news'].includes(a.kind)) {
       const s = stock(a.symbol)
       navigate('Research', s, a.kind)
-      text('Opened ' + (a.kind === 'open_stock' ? 'research' : a.kind) + ' for ' + s + '.')
+      await text('Opened ' + (a.kind === 'open_stock' ? 'research' : a.kind) + ' for ' + s + '.')
       return
     }
     if (a.kind === 'chart') {
       const symbols = [...new Set((a.symbols || []).map((s) => stock(s)))].slice(0, 4)
       if (!symbols.length) throw Error('Choose a symbol for the chart.')
-      append({ text: 'Price history', graph: { symbols, span: a.span || '1y' } })
+      const span = a.span || '1y'
+      const saved = await api<{ id: string }>('/assistant/charts', 'POST', { symbols, span })
+      await append({ text: 'Price history', links, graph: { symbols, span, snapshot: saved.id } })
       return
     }
     if (a.kind === 'research') {
@@ -178,7 +337,7 @@ export function Assistant({ page, symbol, connection, navigate, save, updated, c
         'POST',
         { question: a.question },
       )
-      append({ text: result.text, sources: result.sources })
+      await append({ text: result.text, sources: result.sources, links })
       return
     }
     if (a.kind === 'score') {
@@ -186,7 +345,7 @@ export function Assistant({ page, symbol, connection, navigate, save, updated, c
         result = await api<Opinion>('/desk/recommend/' + enc(s), 'POST')
       updated()
       navigate('Research', s, 'scores')
-      append({
+      await append({
         text:
           s +
           ' · Buy ' +
@@ -195,6 +354,7 @@ export function Assistant({ page, symbol, connection, navigate, save, updated, c
           result.risk_score +
           '/100. ' +
           result.thesis.text,
+        links,
         sources: result.sources.filter((e) => result.thesis.citations.includes(e.id)),
       })
       return
@@ -203,7 +363,7 @@ export function Assistant({ page, symbol, connection, navigate, save, updated, c
       const s = stock(a.symbol)
       await save({ advanced: true })
       navigate('Research', s, 'control_' + a.command)
-      text('Opened the chart for ' + s + '.')
+      await text('Opened the chart for ' + s + '.')
       return
     }
     if (a.kind === 'drawing') {
@@ -258,7 +418,7 @@ export function Assistant({ page, symbol, connection, navigate, save, updated, c
       await save({ advanced: true })
       updated()
       navigate('Research', s, 'layout_saved')
-      text('Saved the ' + a.shape + ' drawing on ' + s + '.')
+      await text('Saved the ' + a.shape + ' drawing on ' + s + '.')
       return
     }
     if (a.kind === 'portfolio_quote') {
@@ -278,11 +438,12 @@ export function Assistant({ page, symbol, connection, navigate, save, updated, c
       for (const s of new Set(rows.map((r) => r.symbol)))
         marks.set(s, await api('/desk/quote/' + enc(s)))
       if (!rows.length) {
-        text('No matching positions with a quantity were found on this Mac.')
+        await text('No matching positions with a quantity were found on this Mac.')
         return
       }
-      append({
-        text: 'Position values at available quote times. A dash means that a price in the statement currency was unavailable.',
+      await append({
+        text: 'Latest position values by currency.',
+        links,
         rows: rows.map((p) => {
           const q = marks.get(p.symbol)
           const usable = q?.data?.currency === p.currency
@@ -329,7 +490,7 @@ export function Assistant({ page, symbol, connection, navigate, save, updated, c
             ? a.tool
             : 'tools',
       )
-      text(
+      await text(
         a.tool && ['trend', 'box'].includes(a.tool)
           ? 'Select two points on the advanced chart.'
           : a.tool === 'horizontal'
@@ -340,7 +501,10 @@ export function Assistant({ page, symbol, connection, navigate, save, updated, c
     }
     if (a.kind === 'import') {
       navigate(a.file_type === 'watchlist' ? 'Watchlists' : 'Portfolio', undefined, a.file_type)
-      text('Opened the local ' + a.file_type + ' import. Choose the file on your Mac.')
+      await append({
+        text: 'Choose a file on your Mac.',
+        links: a.file_type === 'holdings' ? [...links, portfolioGuide] : links,
+      })
       return
     }
     if (
@@ -358,7 +522,7 @@ export function Assistant({ page, symbol, connection, navigate, save, updated, c
               ? { advanced: a.enabled }
               : { home_symbol: stock(a.symbol) },
       )
-      text('Saved your ' + a.kind.replace('_', ' ') + ' preference.')
+      await text('Saved your ' + a.kind.replace('_', ' ') + ' preference.')
       return
     }
     if (a.kind === 'model') {
@@ -367,7 +531,7 @@ export function Assistant({ page, symbol, connection, navigate, save, updated, c
         remember: connection?.storage === 'macOS Keychain',
       })
       connected(v)
-      text('Verified generation with ' + v.model + '.')
+      await text('Verified generation with ' + v.model + '.')
       return
     }
     if (
@@ -377,7 +541,7 @@ export function Assistant({ page, symbol, connection, navigate, save, updated, c
     ) {
       const lists = await api<SavedList[]>('/watchlists')
       if (a.kind === 'watchlists') {
-        text(
+        await text(
           lists.map((l) => l.name + ' — ' + (l.symbols.join(', ') || 'empty')).join('\n') ||
             'No saved lists.',
         )
@@ -385,16 +549,16 @@ export function Assistant({ page, symbol, connection, navigate, save, updated, c
       }
       if (a.kind === 'create_list') {
         await api('/watchlists', 'POST', { name: a.name })
-        text('Created ' + a.name + '.')
+        await text('Created ' + a.name + '.')
       } else {
         const l = named(lists, a.name, true),
           path = '/watchlists/' + enc(l.id)
         if (a.kind === 'rename_list') {
           await api(path, 'PATCH', { name: a.new_name })
-          text('Renamed ' + l.name + ' to ' + a.new_name + '.')
+          await text('Renamed ' + l.name + ' to ' + a.new_name + '.')
         } else if (a.kind === 'delete_list') {
           await api(path, 'DELETE')
-          text('Removed ' + l.name + '.')
+          await text('Removed ' + l.name + '.')
         } else {
           const s = stock(a.symbol)
           await api(
@@ -402,7 +566,7 @@ export function Assistant({ page, symbol, connection, navigate, save, updated, c
             a.kind === 'watch' ? 'POST' : 'DELETE',
             a.kind === 'watch' ? { symbol: s } : undefined,
           )
-          text((a.kind === 'watch' ? 'Watching ' : 'Removed ') + s + ' · ' + l.name + '.')
+          await text((a.kind === 'watch' ? 'Watching ' : 'Removed ') + s + ' · ' + l.name + '.')
         }
       }
       updated()
@@ -421,7 +585,7 @@ export function Assistant({ page, symbol, connection, navigate, save, updated, c
         a.kind === 'alerts' && a.mode === 'check' ? 'POST' : 'GET',
       )
       if (a.kind === 'alerts') {
-        text(
+        await text(
           all
             .map(
               (v) =>
@@ -444,10 +608,10 @@ export function Assistant({ page, symbol, connection, navigate, save, updated, c
         )
         if (matches.length !== 1) throw Error('Select the matching alert under Watchlists.')
         await api('/alerts/' + enc(matches[0].id), 'DELETE')
-        text('Removed the alert.')
+        await text('Removed the alert.')
       } else {
         await api('/alerts', 'POST', { symbol: s, direction: a.direction, threshold: a.threshold })
-        text('Watching ' + s + ' ' + a.direction + ' ' + a.threshold + '.')
+        await text('Watching ' + s + ' ' + a.direction + ' ' + a.threshold + '.')
       }
       updated()
       return
@@ -463,24 +627,25 @@ export function Assistant({ page, symbol, connection, navigate, save, updated, c
             quantity: p.quantity,
           })),
         )
-        append({
+        await append({
           text: rows.length
             ? 'Statement values on this Mac'
             : 'Your portfolio has no saved positions.',
           rows,
           allocation: a.view === 'allocation',
+          links,
         })
         return
       }
       if (a.kind === 'add_account') {
         await api('/holdings/accounts', 'POST', { name: a.name, institution: a.institution })
-        text('Saved account ' + a.name + '.')
+        await text('Saved account ' + a.name + '.')
       } else {
         const ac = named(accounts, a.account || a.name),
           path = '/holdings/accounts/' + enc(ac.id)
         if (a.kind === 'delete_account') {
           await api(path, 'DELETE')
-          text('Removed account ' + ac.name + '.')
+          await text('Removed account ' + ac.name + '.')
         } else {
           const s = stock(a.symbol)
           const match = ac.positions.filter((p) => p.symbol.toUpperCase() === s)
@@ -497,13 +662,18 @@ export function Assistant({ page, symbol, connection, navigate, save, updated, c
               description: old?.description || '',
               quantity: a.quantity ?? old?.quantity,
               price: a.price ?? old?.price,
-              value: a.value ?? (a.quantity != null || a.price != null ? null : old?.value),
+              value:
+                typeof a.value === 'number'
+                  ? a.value
+                  : a.quantity != null || a.price != null
+                    ? null
+                    : old?.value,
               basis: a.basis ?? old?.basis,
               currency: a.currency || old?.currency || 'USD',
               as_of: a.date || old?.as_of || null,
             })
           }
-          text('Updated ' + s + ' in ' + ac.name + '.')
+          await text('Updated ' + s + ' in ' + ac.name + '.')
         }
       }
       updated()
@@ -513,52 +683,87 @@ export function Assistant({ page, symbol, connection, navigate, save, updated, c
   }
   async function send(message = input) {
     const value = message.trim()
-    if (!value || requestLock.current) return
+    if (
+      !value ||
+      requestLock.current ||
+      history.loading ||
+      history.dirty ||
+      !connection?.configured
+    )
+      return
     if (/\bsk-[\w-]{12,}/i.test(value)) {
       type('')
-      fail('Enter keys in Settings. This message was kept on your Mac.')
+      fail('Enter API keys in Settings.')
       return
     }
     requestLock.current = true
     wait(true)
     fail('')
-    type('')
-    append({ role: 'user', text: value })
     try {
-      const msgs = [...context.current, { role: 'user' as const, text: value }].slice(-15)
-      const result = await api<{ reply: string; actions: Action[] }>('/assistant', 'POST', {
-        page,
-        symbol,
-        messages: msgs,
-      })
-      context.current = [
+      const conversation = await history.ensure(value)
+      const msgs: Context = [...conversation.context, { role: 'user' as const, text: value }].slice(
+        -15,
+      )
+      await append({ role: 'user', text: value }, msgs)
+      type('')
+      const result = await api<{ reply: string; actions: Action[]; links?: ChatLink[] }>(
+        '/assistant',
+        'POST',
+        { page, symbol, messages: msgs, custom_tab_open: Boolean(currentTab) },
+      )
+      const links = (result.links || [])
+        .map((l) => ({ ...l, symbol: l.symbol || symbol }))
+        .filter((l) => !!linkUrl(l, symbol))
+        .slice(0, 2)
+      // Follow-up turns include user text and planner intent. Account values and local receipts stay on-device.
+      const plan = result.actions
+        .map((a) => [a.kind, a.symbol, a.symbols?.join(', '), a.span].filter(Boolean).join(' '))
+        .join(', ')
+      const next: Context = [
         ...msgs,
-        { role: 'assistant', text: result.reply || 'Requested actions.' },
-      ].slice(-15) as typeof msgs
-      if (result.reply) append({ text: result.reply })
-      for (const action of result.actions) await execute(action)
+        {
+          role: 'assistant' as const,
+          text: [result.reply, plan].filter(Boolean).join(' ').slice(0, 2900) || 'Ready.',
+        },
+      ].slice(-15)
+      if (result.actions.length) {
+        if (result.reply.includes('?')) await append({ text: result.reply, links }, next)
+        else await history.write({ context: next })
+        for (let i = 0; i < result.actions.length; i++)
+          await execute(result.actions[i], false, i === 0 ? links : [])
+      } else await append({ text: result.reply || 'Choose a destination.', links }, next)
     } catch (e) {
-      fail(errorText(e))
+      if (history.current.current && !history.pending.current) {
+        try {
+          await append({ text: errorText(e), error: true })
+        } catch (saveError) {
+          fail(errorText(saveError))
+        }
+      } else fail(errorText(e))
     } finally {
       requestLock.current = false
       wait(false)
     }
   }
   async function decide(e: Entry, allow: boolean) {
-    if (requestLock.current || !e.confirmation?.pending) return
-    set((all) =>
-      all.map((x) =>
-        x.id === e.id ? { ...x, confirmation: { ...e.confirmation!, pending: false } } : x,
-      ),
+    if (
+      requestLock.current ||
+      !e.confirmation?.pending ||
+      history.dirty ||
+      !history.current.current
     )
-    if (!allow) {
-      append({ text: 'Cancelled.' })
       return
-    }
     requestLock.current = true
     wait(true)
+    fail('')
     try {
-      await execute(e.confirmation.action, true)
+      await history.write({
+        entries: history.current.current.entries.map((row) =>
+          row.id === e.id ? { ...row, confirmation: { ...e.confirmation!, pending: false } } : row,
+        ),
+      })
+      if (allow) await execute(e.confirmation.action, true)
+      else await append({ text: 'Cancelled.' })
     } catch (ex) {
       fail(errorText(ex))
     } finally {
@@ -566,120 +771,270 @@ export function Assistant({ page, symbol, connection, navigate, save, updated, c
       wait(false)
     }
   }
+  const navProps = { symbol, follow }
+  const historyError = history.error || error
   return (
-    <aside className="assistant">
+    <aside className="assistant sr-assistant">
       {open && (
         <section
           className="chat-panel"
           aria-label="StockReplay assistant"
           onKeyDown={(e) => {
-            if (e.key === 'Escape') minimize()
+            if (e.key === 'Escape') {
+              if (menu) setMenu(false)
+              else minimize()
+            }
           }}
         >
           <header>
             <span className="chat-icon">
-              <Sparkles size={18} />
+              <Sparkles size={17} aria-hidden />
             </span>
-            <div>
+            <div className="chat-heading">
               <strong>StockReplay assistant</strong>
-              <small>{connection?.configured ? connection.model : 'Connect OpenAI to chat'}</small>
+              <small title={history.chat?.title}>
+                {menu ? 'Conversation history' : history.chat?.title || 'New conversation'}
+              </small>
             </div>
-            <button className="icon-btn" aria-label="Minimize assistant" onClick={minimize}>
-              <Minus size={19} />
+            <button
+              className="icon-btn"
+              aria-label={menu ? 'Back to chat' : 'Chat history'}
+              title={menu ? 'Back to chat' : 'Chat history'}
+              aria-expanded={menu}
+              disabled={locked}
+              onClick={() => {
+                setMenu(!menu)
+                setRename(null)
+                setDeleting(false)
+                if (!menu) void history.refresh().catch((e) => fail(errorText(e)))
+              }}
+            >
+              {menu ? <ChevronLeft size={16} /> : <History size={16} />}
+            </button>
+            <button
+              className="icon-btn"
+              aria-label="Minimize assistant"
+              title="Minimize"
+              onClick={minimize}
+            >
+              <Minus size={17} />
             </button>
           </header>
-          <div className="chat-body" aria-live="polite">
-            {!entries.length && (
-              <>
-                <h3>What would you like to do?</h3>
-                <p>Research a stock, build a graph, or make a change to your workspace.</p>
-                {connection?.configured ? (
-                  <div className="suggestions">
-                    {[
-                      'Chart ' + symbol + ' over one year',
-                      'What risks does ' + symbol + ' face?',
-                      'Show my portfolio allocation',
-                    ].map((t) => (
-                      <button className="btn" key={t} onClick={() => void send(t)}>
-                        {t}
+          {menu ? (
+            <div className="chat-history-body">
+              <button
+                className="btn chat-new"
+                onClick={() => void navigateHistory(null)}
+                disabled={locked || history.dirty}
+              >
+                <SquarePen size={14} /> New conversation
+              </button>
+              {history.list.length === 0 ? (
+                <p className="chat-muted">Your conversations will appear here.</p>
+              ) : (
+                <ul className="chat-history-list">
+                  {history.list.map((c) => (
+                    <li key={c.id}>
+                      <button
+                        aria-current={history.chat?.id === c.id ? 'true' : undefined}
+                        disabled={locked || history.dirty}
+                        onClick={() => void navigateHistory(c.id)}
+                      >
+                        <strong>{c.title}</strong>
+                        <time dateTime={c.updated}>
+                          {new Date(c.updated).toLocaleDateString(undefined, {
+                            month: 'short',
+                            day: 'numeric',
+                          })}
+                        </time>
                       </button>
-                    ))}
-                  </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {history.chat && (
+                <div className="chat-manage">
+                  {rename !== null ? (
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault()
+                        if (rename.trim())
+                          void manage(async () => {
+                            await history.write({ title: rename.trim() })
+                            setRename(null)
+                          })
+                      }}
+                    >
+                      <input
+                        aria-label="Conversation title"
+                        required
+                        maxLength={100}
+                        value={rename}
+                        autoFocus
+                        onChange={(e) => setRename(e.target.value)}
+                      />
+                      <button className="btn small" disabled={locked}>
+                        Save
+                      </button>
+                      <button
+                        className="chat-readmore"
+                        type="button"
+                        onClick={() => setRename(null)}
+                      >
+                        Cancel
+                      </button>
+                    </form>
+                  ) : deleting ? (
+                    <>
+                      <p>Delete “{history.chat.title}” from this Mac?</p>
+                      <div className="inline">
+                        <button className="btn small" onClick={() => setDeleting(false)}>
+                          Cancel
+                        </button>
+                        <button
+                          className="btn small"
+                          onClick={() =>
+                            void manage(async () => {
+                              await history.remove()
+                              setDeleting(false)
+                            })
+                          }
+                        >
+                          Delete conversation
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <small>Current conversation</small>
+                      <div className="inline">
+                        <button
+                          className="chat-readmore"
+                          onClick={() => setRename(history.chat!.title)}
+                        >
+                          <Pencil size={12} />
+                          Rename
+                        </button>
+                        <button className="chat-readmore" onClick={() => setDeleting(true)}>
+                          <Trash2 size={12} />
+                          Delete
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+              {historyError && <ErrorBox text={historyError} />}
+            </div>
+          ) : (
+            <>
+              <div
+                className="chat-body"
+                role="log"
+                aria-label="Conversation"
+                aria-live="polite"
+                ref={body}
+              >
+                {history.loading ? (
+                  <Busy text="Opening chat" />
                 ) : (
-                  <button
-                    className="btn primary"
-                    onClick={() => {
-                      navigate('Settings')
-                      minimize()
-                    }}
-                  >
-                    Open API settings
+                  !entries.length && (
+                    <div className="chat-welcome">
+                      <h3>How can I help?</h3>
+                      <div className="chat-links">
+                        <ChatAnchor {...navProps} link={portfolioGuide} />
+                        <ChatAnchor
+                          {...navProps}
+                          link={{ label: 'View watchlists', page: 'Watchlists', symbol }}
+                        />
+                      </div>
+                      {connection?.configured ? (
+                        <div className="chat-quick">
+                          {['Chart ' + symbol, 'Create a research tab'].map((t) => (
+                            <button
+                              className="btn small"
+                              key={t}
+                              disabled={locked}
+                              onClick={() => void send(t)}
+                            >
+                              {t}
+                            </button>
+                          ))}
+                        </div>
+                      ) : (
+                        <ChatAnchor {...navProps} link={settingsLink} />
+                      )}
+                    </div>
+                  )
+                )}
+                {entries.length > limit && (
+                  <button className="chat-readmore earlier" onClick={() => setLimit((n) => n + 20)}>
+                    Show earlier messages
                   </button>
                 )}
-              </>
-            )}
-            {entries.map((e) => (
-              <article className={'bubble ' + e.role} key={e.id}>
-                <p>{e.text}</p>
-                {e.graph && <ChatGraph {...e.graph} />}{' '}
-                {e.sources?.map((s) => (
-                  <div key={s.id}>
-                    <SourceLink url={s.url}>
-                      {s.source} · {s.text}
-                    </SourceLink>
-                  </div>
+                {entries.slice(-limit).map((e) => (
+                  <ChatMessage
+                    key={e.id}
+                    entry={e}
+                    {...navProps}
+                    busy={locked || history.dirty}
+                    decide={(row, allow) => void decide(row, allow)}
+                  />
                 ))}
-                {e.rows && <LocalRows rows={e.rows} allocation={!!e.allocation} />}
-                {e.confirmation?.pending && (
-                  <div className="inline">
-                    <button
-                      className="btn small"
-                      disabled={busy}
-                      onClick={() => void decide(e, false)}
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      className="btn small primary"
-                      disabled={busy}
-                      onClick={() => void decide(e, true)}
-                    >
-                      Apply change
-                    </button>
+                {busy && <Busy text="Working" />}
+                {historyError && (
+                  <div className="chat-notice">
+                    <ErrorBox text={historyError} />
+                    {history.dirty && !busy && (
+                      <div className="inline">
+                        <button
+                          className="btn small"
+                          onClick={() => void manage(() => history.write())}
+                        >
+                          Retry save
+                        </button>
+                        <button
+                          className="btn small"
+                          onClick={() => void manage(() => history.saveCopy())}
+                        >
+                          Save a copy
+                        </button>
+                      </div>
+                    )}
+                    {history.error && !history.dirty && (
+                      <button className="chat-readmore" onClick={() => void history.init()}>
+                        Retry
+                      </button>
+                    )}
                   </div>
                 )}
-              </article>
-            ))}
-            {busy && <Busy text="Working" />}
-            <ErrorBox text={error} />
-            <div ref={bottom} />
-          </div>
-          <form
-            className="compose"
-            onSubmit={(e) => {
-              e.preventDefault()
-              void send()
-            }}
-          >
-            <input
-              ref={field}
-              aria-label="Message the assistant"
-              maxLength={3000}
-              value={input}
-              disabled={!connection?.configured}
-              placeholder="Ask StockReplay…"
-              onChange={(e) => type(e.target.value)}
-            />
-            <button
-              aria-label="Send message"
-              disabled={busy || !connection?.configured || !input.trim()}
-            >
-              <ArrowUp size={18} />
-            </button>
-          </form>
-          <small className="chat-privacy">
-            Messages go to OpenAI. Saved holdings are read on this Mac.
-          </small>
+              </div>
+              <form
+                className="compose"
+                onSubmit={(e) => {
+                  e.preventDefault()
+                  void send()
+                }}
+              >
+                <input
+                  ref={field}
+                  aria-label="Message the assistant"
+                  maxLength={3000}
+                  value={input}
+                  disabled={!connection?.configured || history.dirty}
+                  placeholder="Ask StockReplay…"
+                  onChange={(e) => type(e.target.value)}
+                />
+                <button
+                  aria-label="Send message"
+                  disabled={locked || history.dirty || !connection?.configured || !input.trim()}
+                >
+                  <ArrowUp size={17} />
+                </button>
+              </form>
+              <small className="chat-privacy">Saved on this Mac · Messages sent to OpenAI</small>
+            </>
+          )}
         </section>
       )}
       <button
@@ -687,49 +1042,17 @@ export function Assistant({ page, symbol, connection, navigate, save, updated, c
         className="chat-launch"
         aria-label={open ? 'Close assistant' : 'Open assistant'}
         aria-expanded={open}
-        onClick={() => (open ? minimize() : setOpen(true))}
+        onClick={() => {
+          if (open) minimize()
+          else {
+            setOpen(true)
+            void history.init()
+          }
+        }}
       >
-        {open ? <Minus size={20} /> : <MessageCircle size={20} />}
+        {open ? <Minus size={18} /> : <MessageCircle size={18} />}
         <span>Assistant</span>
       </button>
     </aside>
-  )
-}
-function LocalRows({ rows, allocation }: { rows: Row[]; allocation: boolean }) {
-  const groups = [...new Set(rows.map((r) => r.currency))]
-  return (
-    <>
-      {groups.map((c) => {
-        const selected = rows.filter((r) => r.currency === c),
-          total = selected.reduce((v, r) => v + Math.abs(r.value || 0), 0)
-        return (
-          <div className="local-values" key={c}>
-            <strong>
-              {c} ·{' '}
-              {amount(
-                selected.reduce((v, r) => v + (r.value || 0), 0),
-                c,
-              )}{' '}
-              net
-            </strong>
-            {selected.map((r, i) => (
-              <div key={i}>
-                <span>{r.name}</span>
-                <b>{amount(r.value, c)}</b>
-                {allocation && r.value != null && total > 0 && (
-                  <meter
-                    aria-label={r.name + ' share of gross exposure'}
-                    min={0}
-                    max={total}
-                    value={Math.abs(r.value)}
-                  />
-                )}
-              </div>
-            ))}
-            {allocation && <small>Bars show share of gross value in {c}.</small>}
-          </div>
-        )
-      })}
-    </>
   )
 }

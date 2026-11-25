@@ -13,6 +13,8 @@ import { HoldingsPage } from './Positions'
 import { PriceFiles } from './PriceFiles'
 import { Settings } from './Settings'
 import { Assistant } from './Assistant'
+import { MyTabs, CustomTabView } from './CustomTabView'
+import { tabHref } from './customTabs'
 import { api, errorText } from './types'
 import { ErrorBox } from './ui'
 import {
@@ -30,11 +32,28 @@ const nav = [
   { name: 'Watchlists' as const, icon: Bookmark },
   { name: 'Portfolio' as const, icon: BriefcaseBusiness },
 ]
+const deepLinks: Record<Page, string[]> = {
+  Research: ['news', 'ratings', 'scores', 'tools', 'saved-articles'],
+  Portfolio: ['import-guide', 'holdings', 'prices', 'account'],
+  Watchlists: ['watchlist'],
+  Settings: [],
+}
 function readRoute() {
   const parts = location.hash.replace(/^#\/?/, '').split('/')
+  const tabId = parts[0] === 'tabs' && /^[0-9a-f]{32}$/.test(parts[1] || '') ? parts[1] : ''
   const page = pages.find((p) => p.toLowerCase() === parts[0]) || 'Research'
-  const s = (parts[1] || '').toUpperCase()
-  return { page, symbol: tickerPattern.test(s) ? s : '' }
+  let ticker = ''
+  try {
+    ticker = decodeURIComponent(parts[1] || '').toUpperCase()
+  } catch {
+    /* Invalid pasted address. */
+  }
+  return {
+    page,
+    symbol: tickerPattern.test(ticker) ? ticker : '',
+    tabId,
+    focus: !tabId && deepLinks[page].includes(parts[2]) ? parts[2] : '',
+  }
 }
 function SearchStock({ select }: { select: (s: string) => void }) {
   const [text, type] = useState(''),
@@ -151,7 +170,7 @@ export default function App() {
     [connection, connected] = useState<Connection | null>(null),
     [err, fail] = useState(''),
     [seq, refresh] = useState(0),
-    [intent, setIntent] = useState<Intent>({ kind: '', seq: 0 })
+    [intent, setIntent] = useState<Intent>(() => ({ kind: route.focus, seq: route.focus ? 1 : 0 }))
   const committed = useRef(firstPreferences),
     pending = useRef(new Map<number, Partial<Preferences>>()),
     writes = useRef(Promise.resolve()),
@@ -175,8 +194,10 @@ export default function App() {
         if (active) setReady(true)
       })
     const pop = () => {
-      setRoute(readRoute())
-      setIntent({ kind: '', seq: 0 })
+      const next = readRoute()
+      setRoute(next)
+      setIntent((prev) => ({ kind: next.focus, seq: prev.seq + 1 }))
+      if (!next.focus) window.scrollTo(0, 0)
     }
     window.addEventListener('hashchange', pop)
     return () => {
@@ -218,16 +239,34 @@ export default function App() {
     return next
   }
   function go(p: Page, s?: string, focus = '') {
-    const next = { page: p, symbol: (s || symbol).toUpperCase() }
-    const newHash = '#/' + p.toLowerCase() + '/' + next.symbol
+    const next = {
+      page: p,
+      symbol: (s || symbol).toUpperCase(),
+      tabId: '',
+      focus: deepLinks[p].includes(focus) ? focus : '',
+    }
+    const newHash =
+      '#/' + p.toLowerCase() + '/' + next.symbol + (next.focus ? '/' + next.focus : '')
     if (location.hash !== newHash) history.pushState(null, '', newHash)
     setRoute(next)
     setIntent((v) => ({ kind: focus, seq: v.seq + 1 }))
     if (!focus) window.scrollTo(0, 0)
   }
+  function openTab(id: string) {
+    if (!id) {
+      go('Research')
+      return
+    }
+    if (!/^[0-9a-f]{32}$/.test(id)) return
+    if (location.hash !== tabHref(id)) history.pushState(null, '', tabHref(id))
+    setRoute({ page: 'Research', symbol, tabId: id, focus: '' })
+    setIntent((v) => ({ kind: '', seq: v.seq + 1 }))
+    window.scrollTo(0, 0)
+  }
   useEffect(() => {
+    if (route.tabId) return
     document.title = page === 'Research' ? symbol + ' · StockReplay' : page + ' · StockReplay'
-  }, [page, symbol])
+  }, [page, symbol, route.tabId])
   return (
     <>
       <header className="topbar">
@@ -250,18 +289,27 @@ export default function App() {
             </svg>
             StockReplay
           </button>
-          <nav aria-label="Main navigation">
-            {nav.map(({ name, icon: Icon }) => (
-              <button
-                key={name}
-                aria-current={page === name ? 'page' : undefined}
-                onClick={() => go(name)}
-              >
-                <Icon size={16} />
-                {name}
-              </button>
-            ))}
-          </nav>
+          <div className="nav-cluster">
+            <nav aria-label="Main navigation">
+              {nav.map(({ name, icon: Icon }) => (
+                <button
+                  key={name}
+                  aria-current={!route.tabId && page === name ? 'page' : undefined}
+                  onClick={() => go(name)}
+                >
+                  <Icon size={16} />
+                  {name}
+                </button>
+              ))}
+            </nav>
+            <MyTabs
+              active={route.tabId}
+              openTab={openTab}
+              symbol={symbol}
+              version={seq}
+              changed={() => refresh((n) => n + 1)}
+            />
+          </div>
           <div className="header-right">
             <SearchStock select={(s) => go('Research', s)} />
             <button
@@ -279,7 +327,17 @@ export default function App() {
         <ErrorBox text={err} />
         {ready && (
           <>
-            {page === 'Research' && (
+            {route.tabId && (
+              <CustomTabView
+                key={route.tabId}
+                id={route.tabId}
+                symbol={symbol}
+                version={seq}
+                changed={() => refresh((n) => n + 1)}
+                onRemoved={() => go('Research')}
+              />
+            )}
+            {!route.tabId && page === 'Research' && (
               <Research
                 key={symbol}
                 symbol={symbol}
@@ -314,6 +372,8 @@ export default function App() {
       </main>
       <Assistant
         page={page}
+        openTab={openTab}
+        currentTab={route.tabId || undefined}
         symbol={symbol}
         connection={connection}
         navigate={go}

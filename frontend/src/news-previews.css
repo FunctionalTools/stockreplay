@@ -1,0 +1,117 @@
+.news-previews .news-card {
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+  align-self: start;
+  gap: 0;
+  padding: 0;
+}
+.news-card-copy,
+.news-reader-copy {
+  display: grid;
+  gap: 10px;
+  padding: 17px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.publisher-photo {
+  width: 100%;
+  display: block;
+  aspect-ratio: 1.96;
+  object-fit: cover;
+}
+.pending-photo {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+.news-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 3px 8px;
+  font-size: 0.73rem;
+  color: var(--muted);
+}
+.news-card-meta strong {
+  color: var(--accent);
+}
+.news-card-meta time {
+  white-space: nowrap;
+}
+.news-previews .news-card h3 {
+  font-size: 1.11rem;
+  letter-spacing: -0.026em;
+  line-height: 1.32;
+}
+.news-previews .news-card footer {
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 9px 0 0;
+  border-top: 1px solid var(--line);
+}
+.news-card-actions,
+.news-used {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.news-used {
+  color: var(--accent);
+  font-size: 0.72rem;
+}
+.news-preview-trigger {
+  min-height: 30px;
+  padding: 4px 7px;
+  font-size: 0.77rem;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--bg);
+}
+.news-reader {
+  position: relative;
+}
+.news-reader .publisher-photo:not(.pending-photo) {
+  max-height: 34dvh;
+}
+.news-reader-copy {
+  padding: clamp(17px, 4vw, 29px);
+  gap: 12px;
+}
+.news-card .news-reader-copy h3 {
+  font-size: clamp(1.25rem, 3.5vw, 1.8rem);
+  line-height: 1.22;
+}
+.news-card .news-reader-copy p {
+  display: block;
+  margin: 0;
+  color: var(--text);
+  line-height: 1.65;
+  font-size: 1rem;
+}
+.news-previews.compact-news {
+  grid-template-columns: 1fr;
+}
+.compact-news .news-card {
+  display: block;
+}
+.compact-news .news-card > .publisher-photo:not(.pending-photo) {
+  float: right;
+  width: min(35%, 120px);
+  height: 82px;
+  margin: 13px 13px 0 0;
+  border-radius: 5px;
+}
+.compact-news .news-card-copy {
+  padding: 12px;
+}
+.compact-news .news-card h3 {
+  font-size: 0.96rem;
+}
+.compact-news .news-deck {
+  display: none;
+}

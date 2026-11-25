@@ -6,6 +6,7 @@ The stock research interface has three primary pages and a separate Settings scr
 
 - Python exercises score generation after a successful Responses API probe, restricted model discovery, independent scores, citation validation, incomplete outputs, authentication, model access, quotas and rates. It also tests transactional watchlist and holdings imports, storage privacy and the archival research engine.
 - The browser tests paste a test credential into Settings and generate scores through the actual local service. Only the upstream OpenAI transport is intercepted. They also exercise assistant actions, comparison charts, saved advanced drawings, local imports, appearance, persistence and mobile navigation.
+- Chat and workspace tests also exercise transcript restart and revision handling, original price-chart snapshots, assistant-created tabs, portfolio import guides, saved articles and broken-media fallback.
 - The macOS jobs exercise Apple Silicon and Intel, including a real temporary Keychain, production installation, startup, Chromium and WebKit. The live public check reads current prices, news, forecast distributions, company risk metrics and targets for NVDA and opens Research in the browser.
 - Setting a dedicated `STOCKREPLAY_TEST_OPENAI_KEY` enables a billable end-to-end test of the selected model, stock scores and assistant chart action. The test is explicitly skipped when that credential is absent.
 

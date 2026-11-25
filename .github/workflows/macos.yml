@@ -38,18 +38,27 @@ jobs:
           .venv/bin/python -m pytest -q
           npm --prefix frontend test
           npm --prefix frontend run e2e
-      - name: Exercise market and portfolio flows in WebKit
+      - name: Exercise the workspace in WebKit
         working-directory: frontend
         env:
           STOCKREPLAY_BROWSER: webkit
         run: |
           export PLAYWRIGHT_BROWSERS_PATH="$PWD/../.local/browsers"
           ./node_modules/.bin/playwright install webkit
-          npm run e2e -- terminal.spec.ts
-      - name: Verify local service lifecycle
+          npm run e2e
+      - name: Reopen saved work after restarting the local service
+        env:
+          STOCKREPLAY_HOME: ${{ runner.temp }}/stockreplay-restart
         run: |
           ./start.sh
-          curl --fail http://127.0.0.1:8765/api/health
+          api=http://127.0.0.1:8765/api
+          tab=$(curl -fsS "$api/tabs" --json '{"title":"Restart check","blocks":[{"view":"note","value":"Saved on this Mac"}]}' | jq -er '.id')
+          chat=$(curl -fsS "$api/assistant/chats" --json '{"title":"Restart check"}' | jq -er '.id')
+          curl -fsS -X PUT "$api/assistant/chats/$chat" --json '{"revision":0,"entries":[{"id":1,"role":"user","text":"Where is my portfolio?"}],"context":[]}' > /dev/null
+          ./stop.sh
+          ./start.sh
+          curl -fsS "$api/tabs/$tab" | jq -e '.blocks[0].value == "Saved on this Mac"'
+          curl -fsS "$api/assistant/chats/$chat" | jq -e '.entries[0].text == "Where is my portfolio?"'
           ./stop.sh
       - name: Verify current public sources on macOS
         if: github.event_name == 'workflow_dispatch' && inputs.live_providers && matrix.runner == 'macos-15'

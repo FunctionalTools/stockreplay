@@ -1,0 +1,85 @@
+.portfolio-import-guide {
+  min-width: 0;
+}
+.guide-sources {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem;
+}
+.guide-sources button {
+  border: 1px solid transparent;
+  background: var(--soft);
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 0.38rem 0.85rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+.guide-sources button[aria-pressed='true'] {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.guide-steps {
+  counter-reset: guide-step;
+  list-style: none;
+  margin: 1.15rem 0;
+  padding: 0;
+}
+.guide-steps > li {
+  counter-increment: guide-step;
+  position: relative;
+  padding: 0 0 1rem 2.5rem;
+}
+.guide-steps > li::before {
+  content: counter(guide-step);
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: var(--accent);
+  background: var(--accent-soft);
+  font-weight: 650;
+  font-size: 0.83rem;
+}
+.guide-steps > li + li {
+  padding-top: 0.15rem;
+}
+.guide-steps > li:last-child {
+  padding-bottom: 0;
+}
+.guide-steps h3 {
+  margin: 0 0 0.25rem;
+  min-height: 1.75rem;
+}
+.guide-steps p,
+.guide-more p {
+  font-size: 0.92rem;
+  margin: 0.2rem 0 0.4rem;
+}
+.guide-more {
+  padding-top: 0.7rem;
+  border-top: 1px solid var(--line);
+}
+.guide-more summary svg,
+.import-instructions > summary svg {
+  margin-right: 0.3rem;
+  vertical-align: text-bottom;
+}
+.guide-more p {
+  margin: 0.6rem 0;
+}
+.guide-start {
+  margin-top: 1.1rem;
+}
+.import-instructions {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 0.7rem 0.9rem;
+}
