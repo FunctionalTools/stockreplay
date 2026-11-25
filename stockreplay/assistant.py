@@ -109,6 +109,7 @@ DESTINATIONS = {
     "Research": ("Research", ""),
     "Analyst ratings": ("Research", "ratings"),
     "News articles": ("Research", "news"),
+    "Saved articles": ("Research", "saved-articles"),
     "Buy and risk scores": ("Research", "scores"),
     "Advanced chart": ("Research", "tools"),
     "Watchlists": ("Watchlists", ""),
@@ -124,6 +125,7 @@ Write one plain sentence, at most 18 words. Skip introductions, repeated action 
 For actions, leave reply empty when the app's result will answer the request. For a question about finding or
 using a feature, return up to two relevant destination names as links. Open it immediately only if asked.
 When custom_tab_open is true, “this tab” means the open custom tab: for append, open, rename or delete, use an empty name. When false, ask which tab if the user omits it.
+For bookmarks, link Saved articles under My tabs. To save a story, point to the bookmark button on its news card.
 For help importing personal investments, link Portfolio import guide. Put destinations in links, never invent URLs.
 """
 

@@ -29,8 +29,33 @@ test('a conflicted transcript survives a reload as a local draft without repeati
   await expect(
     chat.getByText('Create a watchlist for European energy', { exact: true }),
   ).toBeVisible()
+  // Lose the reply after the service commits. The title only changes after acknowledgement.
+  const copies = new Set<string>()
+  let lostResponse = false
+  await page.route('**/api/assistant/chats', async (route) => {
+    const req = route.request()
+    if (req.method() !== 'POST') return route.continue()
+    const payload = req.postDataJSON()
+    copies.add(payload.id)
+    if (copies.size === 1 && !lostResponse) {
+      const response = await route.fetch()
+      expect(response.ok()).toBe(true)
+      expect((await response.json()).entries).toMatchObject([
+        { text: 'Create a watchlist for European energy' },
+      ])
+      lostResponse = true
+      return route.abort()
+    }
+    return route.continue()
+  })
+  await chat.getByRole('button', { name: 'Save a copy' }).click()
+  await expect(chat.getByText(/The recovered draft is still available/)).toBeVisible()
+  await expect(chat.getByText('Laptop chat', { exact: true })).toBeVisible()
+  await page.reload()
+  await page.getByRole('button', { name: 'Open assistant' }).click()
   await chat.getByRole('button', { name: 'Save a copy' }).click()
   await expect(chat.getByText('Laptop chat (copy)', { exact: true })).toBeVisible()
+  expect(copies.size).toBe(1)
   await expect(chat.getByRole('button', { name: 'Retry save' })).toHaveCount(0)
   const saved = await (await request.get(apiPath)).json()
   expect(saved.title).toBe('Updated elsewhere')

@@ -226,3 +226,45 @@ def test_chat_research_caps_words_and_attributes_evidence(monkeypatch, tmp_path)
         )
         assert value["text"] == "Downside remains possible." and len(value["sources"]) == 2
         assert all(s in docs for s in value["sources"])
+
+
+def test_initial_transcript_is_atomic_and_lost_response_can_be_retried(tmp_path):
+    key = str(uuid4())
+    path = BASE + "/" + key
+    copy = {
+        "id": key,
+        "title": "Recovered copy",
+        "entries": [{"id": 1, "role": "user", "text": "My turn"}],
+        "context": [{"role": "user", "text": "My turn"}],
+    }
+    with TestClient(create_app(tmp_path)) as c:
+        first = c.post(BASE, json=copy)
+        assert first.status_code == 201 and c.get(path).json() == first.json()
+        assert (
+            first.json()["entries"] == copy["entries"]
+            and first.json()["context"] == copy["context"]
+        )
+        assert c.get(BASE).json()[0]["title"] == copy["title"]
+        assert c.post(BASE, json=copy).json() == first.json()
+        assert len(c.get(BASE).json()) == 1
+        # Another window edits the copy before the original browser retries a lost create response.
+        renamed = c.patch(path, json={"revision": 0, "title": "Edited copy"}).json()
+        assert c.post(BASE, json=copy).json() == renamed
+        assert c.post(BASE, json={**copy, "entries": []}).status_code == 409
+        assert c.get(path).json() == renamed
+        # Legacy callers can retry an idempotent empty creation with the same ID.
+        assert c.post(BASE, json={"id": key, "title": "Old client"}).json() == renamed
+        for entries in [
+            [
+                {
+                    "id": 1,
+                    "role": "user",
+                    "text": "x",
+                    "data": {"secret": "sk-this-must-not-hit-storage"},
+                }
+            ],
+            [{"id": 1, "role": "user", "text": "a"}, {"id": 1, "role": "user", "text": "b"}],
+        ]:
+            other = str(uuid4())
+            assert c.post(BASE, json={**copy, "id": other, "entries": entries}).status_code == 422
+            assert c.get(BASE + "/" + other).status_code == 404

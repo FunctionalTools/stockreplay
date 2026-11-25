@@ -290,11 +290,24 @@ export function useChatHistory() {
     if (!current.current) return
     const previous = restored(current.current),
       title = previous.title.slice(0, 64) + ' (copy)'
-    newId.current ??= crypto.randomUUID()
-    const v = await api<Chat>(path, 'POST', { id: newId.current, title })
-    newId.current = null
-    show({ ...v, entries: previous.entries, context: previous.context })
-    await write()
+    // A journal slot identifies this particular snapshot across a lost response or reload.
+    // A single POST commits the title, transcript and model context before the UI switches.
+    newId.current ??= journal.current?.slice(draftPrefix.length) || crypto.randomUUID()
+    try {
+      const v = await api<Chat>(path, 'POST', {
+        id: newId.current,
+        title,
+        entries: previous.entries,
+        context: previous.context,
+      })
+      newId.current = null
+      show(restored(v))
+      track(v)
+      clean()
+    } catch (e) {
+      fail('The recovered draft is still available. ' + errorText(e))
+      throw e
+    }
   }
   async function remove() {
     if (!current.current) return

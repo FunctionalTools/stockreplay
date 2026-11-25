@@ -1,5 +1,6 @@
 """Local snapshots of conversations, including their rendered results and planner context."""
 
+import hashlib
 import json
 import zlib
 from datetime import datetime, timezone
@@ -14,11 +15,6 @@ from .schema import Model
 
 Title = Annotated[str, Field(min_length=1, max_length=120)]
 Revision = Annotated[int, Field(ge=0, strict=True)]
-
-
-class NewChat(Model):
-    title: Title = "New chat"
-    id: UUID | None = None
 
 
 class RenameChat(Model):
@@ -36,17 +32,30 @@ class Entry(Model):
     text: str
 
 
-class SaveChat(Model):
-    revision: Revision
+class Transcript(Model):
     entries: list[Entry]
     context: list[Message]
-    title: Title | None = None
 
     @model_validator(mode="after")
     def unique_ids(self):
         if len({row.id for row in self.entries}) != len(self.entries):
             raise ValueError("Each message must have its own ID.")
         return self
+
+    def pack(self):
+        return packed(**self.model_dump(include={"entries", "context"}, mode="json"))
+
+
+class NewChat(Transcript):
+    title: Title = "New chat"
+    id: UUID | None = None
+    entries: list[Entry] = Field(default_factory=list)
+    context: list[Message] = Field(default_factory=list)
+
+
+class SaveChat(Transcript):
+    title: Title | None = None
+    revision: Revision
 
 
 def packed(entries, context):
@@ -97,6 +106,9 @@ def register_chat_history(parent, db):
                revision integer not null, transcript blob not null)"""
         )
         conn.execute("create index if not exists chat_recency on assistant_chats(updated desc)")
+        conn.execute("""create table if not exists assistant_chat_copies (
+            id text primary key references assistant_chats(id) on delete cascade, fingerprint blob not null
+        )""")
     r = APIRouter(prefix="/assistant/chats", dependencies=[Depends(private_response)])
 
     @r.get("")
@@ -114,12 +126,27 @@ def register_chat_history(parent, db):
         reject_key(request.title)
         key = str(request.id or uuid4())
         ts = stamp()
+        blob = request.pack()
+        copy = bool(request.entries or request.context)
+        fingerprint = (
+            hashlib.sha256(request.title.encode() + b"\0" + blob).digest() if copy else None
+        )
         with db.connect() as conn:
-            conn.execute(
+            created = conn.execute(
                 """insert into assistant_chats(id,title,created,updated,revision,transcript)
                    values(?,?,?,?,0,?) on conflict(id) do nothing""",
-                (key, request.title, ts, ts, packed([], [])),
-            )
+                (key, request.title, ts, ts, blob),
+            ).rowcount
+            if copy and created:
+                conn.execute("insert into assistant_chat_copies values(?,?)", (key, fingerprint))
+            elif copy:
+                original = conn.execute(
+                    "select fingerprint from assistant_chat_copies where id=?", (key,)
+                ).fetchone()
+                if not original or original["fingerprint"] != fingerprint:
+                    raise HTTPException(
+                        409, "This copy ID is already in use for a different conversation."
+                    )
             return full(required(conn, key))
 
     @r.get("/{key}")
@@ -147,8 +174,7 @@ def register_chat_history(parent, db):
 
     @r.put("/{key}")
     def save(key: UUID, request: SaveChat):
-        snapshot = request.model_dump(include={"entries", "context"}, mode="json")
-        return update(key, request.revision, request.title, packed(**snapshot))
+        return update(key, request.revision, request.title, request.pack())
 
     @r.patch("/{key}")
     def rename(key: UUID, request: RenameChat):

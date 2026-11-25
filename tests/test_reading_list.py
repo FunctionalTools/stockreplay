@@ -55,3 +55,38 @@ def test_invalid_reading_list_metadata(tmp_path, article, change):
     with TestClient(create_app(tmp_path)) as client:
         assert client.put("/api/reading-list", json={**article, **change}).status_code == 422
         assert client.get("/api/reading-list").json() == []
+
+
+def test_assistant_links_to_saved_articles_for_the_active_stock(tmp_path, monkeypatch):
+    with TestClient(create_app(tmp_path)) as client:
+        gateway = client.app.state.terminal.openai
+        monkeypatch.setattr(gateway, "credentials", lambda: ("intercepted", "gpt-4.1-mini"))
+
+        def planner(key, model, name, schema, instructions, inputs, budget):
+            assert "Saved articles" in schema["properties"]["links"]["items"]["enum"]
+            assert "bookmark button on its news card" in instructions
+            return {
+                "actions": [],
+                "reply": "Open Saved articles under My tabs.",
+                "links": ["Saved articles"],
+            }
+
+        monkeypatch.setattr(gateway, "structured", planner)
+        response = client.post(
+            "/api/assistant",
+            json={
+                "page": "Portfolio",
+                "symbol": "MSFT",
+                "messages": [{"role": "user", "text": "Where are my saved articles?"}],
+            },
+        )
+        assert response.is_success
+        assert response.json()["links"] == [
+            {
+                "label": "Saved articles",
+                "page": "Research",
+                "symbol": "MSFT",
+                "focus": "saved-articles",
+            }
+        ]
+        assert response.json()["actions"] == []
