@@ -3,6 +3,7 @@ import {
   ArrowDown,
   ArrowUp,
   Bookmark,
+  CalendarDays,
   ChevronDown,
   FolderOpen,
   History,
@@ -17,6 +18,7 @@ import { useResource, SourceLink } from './deskCommon'
 import { usePricePackets, PricePlot } from './PricePlot'
 import { rangePresets, rangePath, rangeLabel, type RangePrices } from './ResearchRange'
 import { Gauge } from './Research'
+import { calendarHref } from './forecastCalendar'
 import { NewsPreviews } from './NewsPreviews'
 import { amount, shortDay, type Source, type SavedList, type Opinion } from './workspace'
 import { tabHref, tabViews, type CustomTab, type TabBlock, type TabSummary } from './customTabs'
@@ -123,6 +125,13 @@ export function MyTabs({
               </a>
             ))}
           </div>
+          <a
+            className="tabs-bookmarks"
+            href={calendarHref({ symbols: [symbol], horizon: '1mo' })}
+            onClick={() => show(false)}
+          >
+            <CalendarDays size={14} /> Forecast calendar
+          </a>
           <a
             className="tabs-bookmarks"
             href={'#/research/' + symbol + '/saved-articles'}

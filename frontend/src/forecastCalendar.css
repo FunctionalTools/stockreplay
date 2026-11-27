@@ -1,0 +1,394 @@
+.fc-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-bottom: 10px;
+  font-size: 0.86rem;
+  text-decoration: none;
+}
+.fc-back:hover,
+.forecast-calendar a:hover {
+  text-decoration: underline;
+}
+.forecast-calendar {
+  min-width: 0;
+}
+.forecast-calendar h2 {
+  font-size: 1.2rem;
+  letter-spacing: -0.03em;
+  margin: 0;
+}
+.forecast-calendar h3 {
+  font-size: 0.98rem;
+  margin: 0.2rem 0;
+}
+.fc-controls,
+.fc-plot-panel,
+.forecast-events,
+.fc-sources {
+  padding: clamp(14px, 2.1vw, 25px);
+  margin-bottom: 14px;
+}
+.fc-instruments,
+.fc-horizons,
+.fc-section-title,
+.forecast-chart-heading,
+.fc-month-title,
+.fc-pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+}
+.fc-instruments form,
+.fc-tickers,
+.fc-horizons .range,
+.forecast-events .range,
+.forecast-key,
+.forecast-playback,
+.fc-pager {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.fc-instruments form input {
+  min-width: 0;
+  width: 150px;
+}
+.fc-tickers {
+  margin-top: 4px;
+}
+.fc-tickers span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 4px 7px;
+  font: 600 0.84rem var(--mono);
+}
+.fc-tickers i,
+.forecast-values th i {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.fc-tickers button {
+  background: transparent;
+  border: 0;
+  padding: 2px;
+  color: var(--muted);
+}
+.fc-horizons {
+  margin-top: 13px;
+  padding-top: 11px;
+  border-top: 1px solid var(--line);
+  justify-content: flex-start;
+}
+.fc-horizons .range button,
+.forecast-events .range button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 31px;
+  padding: 5px 11px;
+}
+.fc-refresh {
+  margin: 0 0 8px auto;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+}
+.forecast-chart {
+  min-width: 0;
+}
+.forecast-key {
+  font-size: 0.75rem;
+  gap: 10px;
+  color: var(--muted);
+}
+.forecast-key span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.forecast-key i {
+  width: 18px;
+  border-top: 2px solid var(--muted);
+}
+.forecast-key span:nth-child(2) i {
+  border-top-style: dashed;
+}
+.forecast-key span:nth-child(3) i {
+  height: 8px;
+  border: 1px solid var(--muted);
+  background: var(--soft);
+}
+.forecast-plot {
+  position: relative;
+  margin-top: 12px;
+  min-width: 0;
+}
+.forecast-plot svg {
+  width: 100%;
+  height: auto;
+  display: block;
+  overflow: visible;
+}
+.forecast-plot svg text {
+  font: 12px var(--sans);
+  fill: var(--muted);
+}
+.fc-grid {
+  stroke: var(--line);
+}
+.forecast-marker {
+  position: absolute;
+  top: 84%;
+  transform: translate(-50%, -50%);
+  background: var(--panel);
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 50%;
+  min-height: 0;
+  width: clamp(13px, 1.8vw, 22px);
+  height: clamp(13px, 1.8vw, 22px);
+  padding: 0;
+  font: 600 0.72rem var(--sans);
+}
+.fc-popup {
+  position: absolute;
+  right: 1%;
+  bottom: 17%;
+  width: min(330px, 94%);
+  max-height: 230px;
+  overflow: auto;
+  z-index: 2;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  box-shadow: 0 5px 22px #07151030;
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+.fc-popup .fc-popup-close {
+  float: right;
+  width: 24px;
+  height: 24px;
+}
+.fc-popup .fc-pager {
+  margin: 6px 0 0;
+}
+.fc-time-note,
+.fc-model-caption,
+.fc-sources p,
+.forecast-event-card p {
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+.fc-time-note {
+  font-size: 0.73rem;
+}
+.forecast-playback {
+  flex-wrap: nowrap;
+  margin: 12px 0 7px;
+  padding-block: 8px;
+  border-block: 1px solid var(--line);
+}
+.forecast-playback input {
+  flex: 1;
+  min-width: 30px;
+  padding: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.forecast-playback .icon-btn {
+  flex: none;
+  width: 30px;
+  height: 30px;
+}
+.forecast-playback output {
+  font: 0.75rem var(--mono);
+  white-space: nowrap;
+  text-align: right;
+}
+.forecast-values {
+  width: 100%;
+  font-size: 0.84rem;
+  font-variant-numeric: tabular-nums;
+}
+.forecast-values th,
+.forecast-values td {
+  text-align: right;
+  white-space: nowrap;
+  padding: 6px 8px;
+}
+.forecast-values th:first-child {
+  text-align: left;
+}
+.forecast-values th i {
+  margin-right: 6px;
+}
+.fc-model-caption {
+  margin: 0.65rem 0 0;
+  font-size: 0.78rem;
+}
+.fc-events-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(210px, 1fr);
+  gap: 18px;
+  margin-top: 13px;
+  align-items: start;
+}
+.fc-events-body > div:only-child {
+  grid-column: 1/-1;
+}
+.fc-agenda {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.fc-agenda li + li {
+  border-top: 1px solid var(--line);
+}
+.fc-agenda button {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(72px, auto) 1fr auto;
+  align-items: center;
+  text-align: left;
+  gap: 8px;
+  padding: 8px 4px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+}
+.fc-agenda button:hover,
+.fc-agenda button[aria-pressed='true'] {
+  background: var(--soft);
+}
+.fc-agenda button time,
+.fc-agenda button small {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+.fc-agenda button span {
+  display: grid;
+  gap: 2px;
+}
+.forecast-event-card {
+  min-width: 0;
+  background: var(--soft);
+  border-radius: 10px;
+  padding: 13px;
+  overflow-wrap: anywhere;
+}
+.forecast-event-card.compact {
+  background: none;
+  padding: 0;
+}
+.forecast-event-card.compact p {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.forecast-event-card p {
+  margin: 7px 0;
+}
+.fc-month {
+  width: 100%;
+  min-width: 0;
+  table-layout: fixed;
+  margin: 6px 0;
+}
+.fc-month td,
+.fc-month th {
+  padding: 0;
+  text-align: center;
+}
+.fc-month td button {
+  border: 0;
+  background: transparent;
+  position: relative;
+  min-height: 30px;
+  padding: 4px;
+  width: 100%;
+  justify-content: center;
+}
+.fc-month td button[aria-pressed='true'] {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.fc-month td button:disabled {
+  opacity: 0.32;
+}
+.fc-month td button i {
+  position: absolute;
+  width: 5px;
+  height: 5px;
+  bottom: 0;
+  left: calc(50% - 2px);
+  border-radius: 50%;
+  background: var(--accent);
+}
+.fc-month-title,
+.fc-pager {
+  justify-content: space-between;
+}
+.fc-pager {
+  margin-top: 10px;
+}
+.fc-sources summary {
+  cursor: pointer;
+  font-weight: 650;
+}
+.fc-source-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr));
+  gap: 16px;
+}
+.fc-sources dl > div {
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+}
+.fc-sources dt,
+.fc-sources dd,
+.fc-sources li {
+  font-size: 0.82rem;
+}
+.fc-sources dd {
+  margin: 0;
+  text-align: right;
+}
+@media (max-width: 720px) {
+  .fc-events-body {
+    grid-template-columns: 1fr;
+  }
+  .forecast-values small {
+    display: none;
+  }
+  .fc-instruments form {
+    width: 100%;
+  }
+  .fc-instruments form input {
+    width: auto;
+    flex: 1;
+  }
+  .forecast-key {
+    font-size: 0.7rem;
+  }
+  .forecast-playback {
+    gap: 2px;
+  }
+  .forecast-calendar .table-wrap {
+    max-width: 100%;
+  }
+}
+.fc-model-caption .source-link {
+  margin-left: 0.7rem;
+}

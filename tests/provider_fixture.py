@@ -144,7 +144,12 @@ def respond(request):
 
 
 def install_market():
+    from tests.fixture_events import install as install_calendar
+    install_calendar()
     from stockreplay import desk
+    desk.PublicResearch.lookup = lambda self, symbol, profile, question="", refresh=False, public_topic=False: {
+        "symbol":symbol,"query":symbol,"checked":datetime.now(timezone.utc).isoformat(),"evidence":[],"coverage":[]
+    }
 
     completed_day = latest_session()
 

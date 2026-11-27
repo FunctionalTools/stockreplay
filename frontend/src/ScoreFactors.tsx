@@ -4,13 +4,15 @@ import { shortDay, type Opinion, type ScoreFactor, type Source } from './workspa
 import './score-factors.css'
 
 function Evidence({ source: s, appliesTo }: { source: Source; appliesTo: string }) {
-  const dateLabel = { close: 'Close', published: 'Published', retrieved: 'Checked' }[
+  const dateLabel = { close: 'Close', published: 'Published', retrieved: 'Checked', indexed: 'Indexed' }[
     s.date_kind ?? 'published'
   ]
   return (
     <li>
       <small>{appliesTo}</small>
       <span className="factor-observation">{s.text}</span>
+      {s.scope && <small>{s.scope}{s.discovered_via ? ' · ' + s.discovered_via : ''}</small>}
+      {s.scope && s.excerpt && <p>{s.excerpt}</p>}
       <div className="factor-attribution">
         <SourceLink url={s.url}>{s.source}</SourceLink>
         <span>

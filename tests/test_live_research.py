@@ -36,3 +36,21 @@ def test_live_ranges_and_exchange_holiday(tmp_path):
             else:
                 assert dates == {"2023-11-22", "2023-11-24", "2023-11-27", "2023-11-28"}
                 assert perf["start"]["date"] == min(dates) and perf["end"]["date"] == max(dates)
+
+
+@pytest.mark.skipif(os.getenv("STOCKREPLAY_PUBLIC_LIVE") != "1", reason="Requires live market sources")
+def test_live_projection_replays_published_closes(tmp_path):
+    with TestClient(create_app(tmp_path)) as client:
+        url = "/api/desk/projections?symbols=AAPL,MSFT&horizon=1d&seed=7&as_of=2023-11-24"
+        packet = client.get(url).raise_for_status().json()
+        assert not packet["errors"], packet["errors"]
+        assert [s["symbol"] for s in packet["series"]] == ["AAPL", "MSFT"]
+        for series in packet["series"]:
+            start, end = series["points"]
+            assert start["date"] == series["history"][-1]["date"] == "2023-11-24"
+            assert start["median"] == series["history"][-1]["price"] > 0
+            assert end["date"] == "2023-11-27"
+            assert 0 < end["low"] < end["median"] < end["high"]
+            assert series["coverage"]["returns"] > 250
+            assert series["validation_1d"]["tested_sessions"] == 63
+            assert series["url"].startswith("https://finance.yahoo.com/")

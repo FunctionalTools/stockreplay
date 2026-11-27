@@ -16,6 +16,7 @@ import yfinance as yf
 
 from .public_cache import PublicCache
 from .news_images import NewsImages, image_url
+from .web_research import PublicResearch
 from .trading_calendar import latest_session
 
 INTERVALS = {
@@ -694,6 +695,7 @@ class Desk:
     def __init__(self, db):
         self.photos = NewsImages(db)
         self.cache = PublicCache(db)
+        self.web = PublicResearch(self.cache)
         self.db = db
 
     def chart(self, symbol, interval="1d", span="2y", refresh=False):
@@ -744,6 +746,10 @@ class Desk:
             "benchmark": b,
         }
 
+    def web_research(self, symbol, question="", refresh=False, public_topic=False):
+        profile = (self.cache.read("profile:" + symbol) or {}).get("data") or {}
+        return self.web.lookup(symbol, profile, question, refresh, public_topic)
+
     def briefing(self, symbol, refresh=False):
         r = self.ratings(symbol, refresh)
         profile = r["profile"]["data"] or {}
@@ -760,6 +766,7 @@ class Desk:
                 "market-news:SPY", 600, lambda: stories("SPY", "market"), refresh
             ),
         }
+        tasks["web_sources"] = lambda: self.web.lookup(symbol, profile, refresh=refresh)
         tasks["volatility_index"] = lambda: self.chart("^VIX", "1d", "6mo", refresh)
         tasks["treasury_yield"] = lambda: self.chart("^TNX", "1d", "6mo", refresh)
         if peer:
@@ -768,7 +775,8 @@ class Desk:
                 "sector-news:" + peer, 900, lambda: stories(peer, "sector"), refresh
             )
         v = parallel(tasks)
-        evidence = []
+        search = v.pop("web_sources")
+        evidence = list(search["evidence"])
 
         def add(group, text, url, date, source, excerpt=None, preview=None, **metadata):
             key = hashlib.sha256((group + str(url) + str(date) + text).encode()).hexdigest()[:14]
@@ -1153,6 +1161,8 @@ class Desk:
                     item.get("excerpt"),
                     item.get("preview"),
                     date_kind="published",
+                    scope="Feed excerpt" if item.get("excerpt") else "Headline only",
+                    discovered_via="Federal Reserve feed" if k == "macro_news" else "Yahoo Finance feed",
                     stale=v[k]["stale"],
                     **relevance,
                 )
@@ -1213,6 +1223,7 @@ class Desk:
             ),
             "price_as_of": series["as_of"] if series else None,
             "evidence": evidence,
+            "web_research": search,
             "issues": issues,
             "current_prices": fresh_series(r["chart"]),
             "current_context": fresh_series(r["benchmark"]) and fresh_series(v.get("sector_chart")),

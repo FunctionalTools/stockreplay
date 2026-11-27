@@ -3,7 +3,7 @@ import { BookOpen, Check } from 'lucide-react'
 import { SourceLink } from './deskCommon'
 import { Modal } from './ui'
 import { ArticleBookmark } from './SavedArticles'
-import { shortDay, type Source } from './workspace'
+import { sourceDate, type Source } from './workspace'
 import './news-previews.css'
 
 type Article = Source & {
@@ -57,7 +57,7 @@ function ArticleCard({ item, cited }: { item: Article; cited: boolean }) {
     title: item.text,
     url: item.url,
     source: item.source,
-    published: item.date,
+    ...(item.date_kind === 'indexed' ? { indexed_at: item.date } : { published: item.date }),
     excerpt: item.excerpt,
   }
   return (
@@ -66,7 +66,7 @@ function ArticleCard({ item, cited }: { item: Article; cited: boolean }) {
       <div className="news-card-copy">
         <div className="news-card-meta">
           <strong>{item.source}</strong>
-          <time dateTime={item.date}>{shortDay(item.date)}</time>
+          <time dateTime={item.date}>{sourceDate(item)}</time>
         </div>
         <h3>{item.text}</h3>
         {hasExcerpt && <p className="news-deck">{excerpt}</p>}
@@ -105,7 +105,7 @@ function ArticleCard({ item, cited }: { item: Article; cited: boolean }) {
             <div className="news-reader-copy">
               <div className="news-card-meta">
                 <strong>{item.source}</strong>
-                <time dateTime={item.date}>{shortDay(item.date)}</time>
+                <time dateTime={item.date}>{sourceDate(item)}</time>
               </div>
               <h3>{item.text}</h3>
               {byline && <small>{byline}</small>}

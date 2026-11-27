@@ -261,6 +261,7 @@ def test_openai_explicit_public_only_contract(client, monkeypatch):
         return completed({**assessment(data), **mutation})
 
     terminal.openai.transport = httpx.MockTransport(intercept)
+    client.patch("/api/ai", json={"provider": "openai"}).raise_for_status()
     assert client.post("/api/desk/recommend/NVDA").status_code == 409 and not sent
     saved = client.put("/api/openai", json={"key": "  " + secret + "  "}).json()
     assert (

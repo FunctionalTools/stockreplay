@@ -1331,8 +1331,14 @@ td .icon-btn {
 }
 
 @media (max-width: 710px) {
+  .research .page-head {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
   .research .page-head > .inline {
-    flex-wrap: nowrap;
+    max-width: 100%;
+    flex-wrap: wrap;
     gap: 5px;
   }
   .scores {

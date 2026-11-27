@@ -161,13 +161,13 @@ export function Assistant({
     symbol,
   }
   const settingsLink: ChatLink = {
-    label: 'Open API settings',
+    label: 'Open AI settings',
     page: 'Settings',
     symbol,
   }
   function target(a: Action): ChatLink | undefined {
     const ticker = a.symbol || symbol
-    if (a.kind === 'navigate' && a.page) return { label: 'Open ' + a.page, page: a.page, symbol }
+    if (a.kind === 'navigate' && a.page) return { label: 'Open ' + a.page, page: a.page, symbol: ticker }
     if (a.kind === 'import') {
       const watch = a.file_type === 'watchlist'
       return {
@@ -387,9 +387,9 @@ export function Assistant({
       return
     }
     if (a.kind === 'navigate') {
-      if (!a.page || !['Research', 'Watchlists', 'Portfolio', 'Settings'].includes(a.page))
+      if (!a.page || !['Research', 'Watchlists', 'Portfolio', 'Settings', 'Calendar'].includes(a.page))
         throw Error('Unknown page.')
-      navigate(a.page)
+      navigate(a.page, a.page === 'Calendar' ? stock(a.symbol) : undefined)
       await text('Opened ' + a.page + '.')
       return
     }
@@ -601,10 +601,17 @@ export function Assistant({
       return
     }
     if (a.kind === 'model') {
-      const v = await api<Connection>('/openai', 'PUT', {
-        model: a.model,
-        remember: connection?.storage === 'macOS Keychain',
-      })
+      const active = await api<Connection>('/ai')
+      if (!connection || active.provider !== connection.provider) {
+        connected(active)
+        throw Error('The selected AI provider changed. Check Settings and ask again.')
+      }
+      const v = active.provider === 'ollama'
+        ? await api<Connection>('/ai/ollama', 'PUT', { model: a.model })
+        : await api<Connection>('/openai', 'PUT', {
+            model: a.model,
+            remember: active.storage === 'macOS Keychain',
+          })
       connected(v)
       await text('Verified generation with ' + v.model + '.')
       return
@@ -1181,7 +1188,7 @@ export function Assistant({
                   <ArrowUp size={17} />
                 </button>
               </form>
-              <small className="chat-privacy">Saved on this Mac · AI requests use OpenAI</small>
+              <small className="chat-privacy">Saved on this Mac · {connection?.provider === 'openai' ? 'AI uses OpenAI' : 'AI runs locally with Ollama'}</small>
             </>
           )}
         </section>

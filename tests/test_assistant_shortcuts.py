@@ -69,6 +69,7 @@ def test_direct_commands_skip_credentials_and_planner_but_never_skip_secret_chec
     tmp_path,
 ):
     with TestClient(create_app(tmp_path)) as c:
+        c.patch("/api/ai", json={"provider": "openai"})
         gateway = c.app.state.terminal.openai
         gateway.transport = httpx.MockTransport(lambda _: pytest.fail("Unexpected OpenAI request"))
         body = {

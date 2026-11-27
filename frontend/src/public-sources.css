@@ -1,0 +1,82 @@
+.public-sources {
+  margin-block: 1.25rem;
+}
+.public-sources > summary {
+  cursor: pointer;
+  font-weight: 650;
+}
+.public-sources > summary > span {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: middle;
+  gap: 0.45rem;
+}
+.public-sources > summary > small {
+  margin-left: 0.7rem;
+  color: var(--muted);
+  font-weight: 400;
+}
+.source-search-body {
+  margin-top: 1rem;
+}
+.source-search-body form {
+  display: grid;
+  gap: 0.4rem;
+}
+.source-search-body form label {
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+.source-search-body form div {
+  display: flex;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+.source-search-body form input {
+  flex: 1 1 12rem;
+  min-width: 0;
+  max-width: 32rem;
+}
+.source-search-body small,
+.source-search-body > p {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+.document-list {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr));
+  gap: 0.8rem;
+}
+.document-list li {
+  border: 1px solid var(--line);
+  padding: 0.8rem 1rem;
+  border-radius: 0.55rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  min-width: 0;
+}
+.document-list h3 {
+  font-size: 1rem;
+  line-height: 1.4;
+  margin: 0.2rem 0;
+}
+.document-list blockquote {
+  margin: 0.2rem 0;
+  border-left: 2px solid var(--accent);
+  padding-left: 0.65rem;
+  font-size: 0.86rem;
+  overflow-wrap: anywhere;
+}
+.document-list footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 0.6rem;
+}
+.source-search-body details {
+  margin-top: 0.7rem;
+  font-size: 0.84rem;
+}

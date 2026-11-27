@@ -102,28 +102,68 @@ def preference(text, current):
     return None
 
 
-def local_actions(raw, current):
+def local_actions(raw, current, provider=None):
     text = re.sub(r"^please\s+", "", " ".join(raw.split()), flags=re.I).rstrip(".!?").strip()
     if not text:
         return None
+    if (
+        re.match(
+            r"^(?:search (?:the )?(?:web|internet|online)|research online|read (?:the )?(?:latest )?SEC filings?)\b",
+            text,
+            re.I,
+        )
+        and len(text) <= 1600
+        and not re.search(
+            r"\b(?:then|and (?:open|save|add|create|change|remove|plot|draw|compare))\b", text, re.I
+        )
+    ):
+        explicit = {
+            ticker
+            for alias, ticker in KNOWN.items()
+            if re.search(r"(?<!\w)" + re.escape(alias) + r"(?!\w)", text, re.I)
+        }
+        explicit.update(
+            m
+            for m in re.findall(r"(?:\$|(?<!\w))([A-Z][A-Z0-9.-]{0,9})(?!\w)", text)
+            if m not in {"SEC", "ETF", "AI", "GDP", "US", "CEO", "EPS", "Q", "I", "RISK"}
+        )
+        if len(explicit) == 1:
+            return [{"kind": "research", "symbol": explicit.pop(), "question": text}]
+        if not explicit and re.search(
+            r"\b(?:this stock|this ticker|current stock|its filings)\b", text, re.I
+        ):
+            return [{"kind": "research", "symbol": current, "question": text}]
+    if m := re.fullmatch(
+        r"(?:open|show|view|go to) (?:the |my )?(?:forecast |stock )?calendar(?: for (.+))?",
+        text,
+        re.I,
+    ):
+        asset = symbol(m[1], current) if m[1] else current
+        if asset:
+            return [{"kind": "navigate", "page": "Calendar", "symbol": asset}]
     # Combine complete settings commands only. Never execute a partial match or discard a clause.
     clauses = re.split(r",\s*(?:and )?| and |;\s*", text, flags=re.I)
     prefs = [preference(s, current) for s in clauses]
     if len(prefs) <= 8 and all(prefs):
         return prefs
     if m := re.fullmatch(
-        r"(?:open|show|go to|take me to) (?:the |my )?(settings|api settings|research|portfolio|watchlists)",
+        r"(?:open|show|go to|take me to) (?:the |my )?(settings|ai settings|api settings|research|portfolio|watchlists)",
         text,
         re.I,
     ):
         page = m[1].capitalize()
-        return [{"kind": "navigate", "page": "Settings" if page == "Api settings" else page}]
+        return [{"kind": "navigate", "page": "Settings" if page.endswith("settings") else page}]
     if m := re.fullmatch(
-        r"(?:set|use|switch|change) (?:the |my )?(?:api |openai )?model(?: to)? (gpt-[\w.-]+|o[134](?:-[\w.-]+)?)",
+        r"(?:set|use|change|switch) (?:the |my )?(?:(local|ollama|openai|api) )?model(?: to)? ([a-z0-9][a-z0-9._:/-]{0,119})",
         text,
         re.I,
     ):
-        return [{"kind": "model", "model": m[1].lower()}]
+        requested = (m[1] or "").lower()
+        if (requested in {"local", "ollama"} and provider == "openai") or (
+            requested == "openai" and provider == "ollama"
+        ):
+            return [{"kind": "navigate", "page": "Settings"}]
+        return [{"kind": "model", "model": m[2]}]
     if re.fullmatch(
         r"(?:add|change|replace|set|connect|update) (?:my |the )?(?:openai |chatgpt )?api key",
         text,

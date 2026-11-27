@@ -59,6 +59,7 @@ def test_invalid_reading_list_metadata(tmp_path, article, change):
 
 def test_assistant_links_to_saved_articles_for_the_active_stock(tmp_path, monkeypatch):
     with TestClient(create_app(tmp_path)) as client:
+        client.patch("/api/ai", json={"provider": "openai"})
         gateway = client.app.state.terminal.openai
         monkeypatch.setattr(gateway, "credentials", lambda: ("intercepted", "gpt-4.1-mini"))
 
@@ -90,3 +91,35 @@ def test_assistant_links_to_saved_articles_for_the_active_stock(tmp_path, monkey
             }
         ]
         assert response.json()["actions"] == []
+
+
+def test_indexed_only_dates_and_preexisting_published_bookmarks(tmp_path, article):
+    from stockreplay.store import Store
+
+    # Upgrade the exact schema used before web search introduced indexed-only dates.
+    with Store(tmp_path).connect() as db:
+        db.execute("""create table reading_list(id text primary key,url text not null,title text not null,
+            source text not null,published text not null,excerpt text,saved_at text not null)""")
+        db.execute(
+            "insert into reading_list values(?,?,?,?,?,?,?)",
+            (
+                "older",
+                article["url"],
+                article["title"],
+                article["source"],
+                article["published"],
+                article["excerpt"],
+                article["published"],
+            ),
+        )
+    with TestClient(create_app(tmp_path)) as client:
+        old = client.get("/api/reading-list").json()[0]
+        assert old["published"] == article["published"] and old["indexed_at"] is None
+        metadata = {**article, "url": "https://example.com/indexed", "published": None}
+        assert client.put("/api/reading-list", json=metadata).status_code == 422
+        indexed = client.put(
+            "/api/reading-list", json={**metadata, "indexed_at": "2026-11-22"}
+        ).json()
+        assert indexed["published"] is None and indexed["indexed_at"] == "2026-11-22"
+    with TestClient(create_app(tmp_path)) as client:
+        assert indexed in client.get("/api/reading-list").json()

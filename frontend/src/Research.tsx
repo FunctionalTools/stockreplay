@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import {
   ArrowUpRight,
   BookmarkPlus,
+  CalendarDays,
   ChevronRight,
   RefreshCw,
   Shield,
@@ -12,13 +13,16 @@ import { api, errorText } from './types'
 import { useResource, SourceLink } from './deskCommon'
 import { Busy, ErrorBox, Modal } from './ui'
 import { ResearchRange } from './ResearchRange'
+import { calendarHref } from './forecastCalendar'
 import { ChartDesk } from './ChartDesk'
+import { PublicSourceSearch, type PublicSearch } from './PublicSourceSearch'
 import { ScoreFactors } from './ScoreFactors'
 import { NewsPreviews } from './NewsPreviews'
 import { OpenSavedArticles, SavedArticlesMenu } from './SavedArticles'
 import {
   amount,
   shortDay,
+  sourceDate,
   type Connection,
   type Intent,
   type Opinion,
@@ -57,6 +61,7 @@ type Brief = {
   current_context: boolean
   issues: string[]
   evidence: Source[]
+  web_research?: PublicSearch
   fundamentals: { currency?: string; shortName?: string; recommendationKey?: string }
   metrics: {
     group: string
@@ -143,7 +148,12 @@ function Cited({ point, sources }: { point?: Point; sources: Source[] }) {
           s && (
             <div key={id}>
               <SourceLink url={s.url}>{s.group?.endsWith('_news') ? s.text : s.source}</SourceLink>
-              <small> · {shortDay(s.date)}</small>
+              <small>
+                {' · '}
+                {s.group?.endsWith('_news') && s.source + ' · '}
+                {sourceDate(s)}
+                {s.stale && ' · Cached after a source error'}
+              </small>
             </div>
           )
         )
@@ -308,29 +318,34 @@ function ExternalRatings({ b, symbol }: { b: Brief; symbol: string }) {
     </section>
   )
 }
-function News({ b, opinion }: { b: Brief; opinion: Opinion | null }) {
+function News({ b, opinion }: { b: Brief | null; opinion: Opinion | null }) {
   const [filter, set] = useState('All'),
     [limit, show] = useState(6)
   const cited = new Set(opinion?.sources.map((s) => s.url))
-  const items = (filter === 'Used in scores' && opinion ? opinion.sources : b.evidence)
-    .filter((s) => s.group.endsWith('_news'))
-    .sort((a, b) => b.date.localeCompare(a.date))
-  const choices = ['All', 'Company', 'Sector', 'Market', 'Used in scores']
-  const rows = items.filter(
-    (s) =>
-      filter === 'All' ||
-      (filter === 'Used in scores'
-        ? cited.has(s.url)
-        : filter === 'Market'
-          ? ['market_news', 'macro_news'].includes(s.group)
-          : s.group === filter.toLowerCase() + '_news'),
+  const currentArticles = (b?.evidence || []).filter((s) => s.group.endsWith('_news'))
+  const savedArticles = (opinion?.sources || []).filter((s) => s.group.endsWith('_news'))
+  const fallback = !currentArticles.length && savedArticles.length > 0
+  const items = (fallback || filter === 'Used in scores' ? savedArticles : currentArticles).sort(
+    (a, b) => b.date.localeCompare(a.date),
   )
+  const choices = ['All', 'Company', 'Sector', 'Market', 'Used in scores']
+  const groups: Record<string, string[]> = {
+    Company: ['company_news', 'web_news'],
+    Sector: ['sector_news'],
+    Market: ['market_news', 'macro_news'],
+  }
+  const rows = items.filter((item) => !groups[filter] || groups[filter].includes(item.group))
   return (
     <section id="news" className="section-anchor">
       <div className="section-title">
         <h2>News behind the numbers</h2>
         <SavedArticlesMenu />
       </div>
+      {fallback && opinion && (
+        <p className="helper">
+          Showing articles saved with the {shortDay(opinion.created)} assessment.
+        </p>
+      )}
       <div className="chips">
         {choices.map((v) => (
           <button
@@ -484,6 +499,9 @@ export function Research({
           >
             <RefreshCw size={15} />
           </button>
+          <a className="btn" href={calendarHref({ symbols: [symbol], horizon: '1mo' })}>
+            <CalendarDays size={15} /> Forecast calendar
+          </a>
           <button className="btn" onClick={() => setWatch(true)}>
             <BookmarkPlus size={15} /> Watch
           </button>
@@ -516,10 +534,13 @@ export function Research({
               shape two independent scores.
             </p>
           )}
+          {busy && connection?.provider === 'ollama' && (
+            <p role="status">Ollama reads the evidence in batches. A full assessment can take several minutes on a Mac CPU.</p>
+          )}
           {connection?.configured ? (
             <button className="btn primary" disabled={busy} onClick={generate}>
               {busy ? (
-                <Busy text="Generating assessment" />
+                <Busy text={connection.provider === 'ollama' ? 'Assessing sources on your Mac…' : 'Generating assessment'} />
               ) : (
                 <>
                   <Sparkles size={14} />
@@ -529,7 +550,8 @@ export function Research({
             </button>
           ) : (
             <button className="btn primary" onClick={settings}>
-              Connect OpenAI <ChevronRight size={15} />
+              {connection?.provider === 'openai' ? 'Connect OpenAI' : 'Set up free local AI'}{' '}
+              <ChevronRight size={15} />
             </button>
           )}
           <ErrorBox text={err} />
@@ -562,15 +584,16 @@ export function Research({
           <OpinionDetails opinion={o} />
         </section>
       )}
+      <PublicSourceSearch key={symbol} symbol={symbol} initial={b?.web_research} />
       <ErrorBox text={eb.error || history.error} />
       {eb.loading && !b && (
         <div className="panel tip">
           <Busy text="Gathering news and analyst ratings" />
         </div>
       )}
+      {(b || o) && <News b={b} opinion={o} />}
       {b && (
         <>
-          <News b={b} opinion={o} />
           <ExternalRatings b={b} symbol={symbol} />
           <details className="panel evidence-detail">
             <summary>Company risk and financial estimates</summary>

@@ -2,6 +2,7 @@ import { test, expect, type Page } from '@playwright/test'
 const live = process.env.STOCKREPLAY_LIVE_TESTS === '1'
 async function connect(page: Page) {
   await page.getByRole('button', { name: 'Settings', exact: true }).click()
+  await page.getByLabel('AI provider').selectOption('openai')
   await page.getByLabel('API model').selectOption('gpt-4.1-mini')
   await page.getByLabel('OpenAI API key').fill('intercepted-browser-test-credential')
   await page.getByRole('button', { name: 'Connect & test' }).click()
@@ -18,9 +19,13 @@ test('key pasted in Settings generates and saves cited independent scores', asyn
 }) => {
   test.skip(live)
   await request.delete('/api/openai')
+  await request.patch('/api/ai', { data: { provider: 'openai' } })
   await page.goto('/')
   const nav = page.getByRole('navigation', { name: 'Main navigation' })
-  await expect(nav.getByRole('button')).toHaveCount(3)
+  for (const name of ['Research', 'Watchlists', 'Portfolio']) {
+    await expect(nav.getByRole('button', { name, exact: true })).toBeVisible()
+  }
+  await expect(page.getByRole('link', { name: 'Forecast calendar' })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Connect OpenAI' })).toBeVisible()
   await connect(page)
   await page.getByRole('button', { name: 'Research', exact: true }).click()
@@ -165,7 +170,7 @@ test('mobile navigation and research stay within the viewport', async ({ page })
   await expect(page.getByRole('heading', { name: 'Analyst ratings' })).toBeVisible()
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(391)
   await page.getByRole('button', { name: 'Settings', exact: true }).click()
-  await expect(page.getByLabel('OpenAI API key')).toBeVisible()
+  await expect(page.getByLabel('AI provider')).toBeVisible()
 })
 test('live public research displays dated news, analyst forecasts and market history', async ({
   page,

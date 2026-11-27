@@ -5,7 +5,7 @@ import { ChatGraph } from './PricePlot'
 import { amount, tickerPattern, type Page } from './workspace'
 import type { ChatLink, Entry, Row } from './chatHistory'
 
-const pages: Page[] = ['Portfolio', 'Watchlists', 'Settings', 'Research']
+const pages: Page[] = ['Portfolio', 'Watchlists', 'Settings', 'Research', 'Calendar']
 const focuses = [
   '',
   'news',
@@ -213,7 +213,7 @@ export function ChatMessage({
               >
                 <span>
                   <small>
-                    {s.source} · {(s.date || '').slice(0, 10)}
+                    {s.source} · {(s.date || '').slice(0, 10)}{s.scope ? ' · ' + s.scope : ''}
                   </small>
                   {s.text}
                 </span>

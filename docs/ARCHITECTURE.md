@@ -1,6 +1,6 @@
 # Architecture
 
-StockReplay serves React and FastAPI from a single loopback origin on macOS. Research, Watchlists and Portfolio share the same local service as Settings and the assistant.
+StockReplay serves React and FastAPI from a single loopback origin on macOS. Research, Calendar, Watchlists and Portfolio share the same local service as Settings and the assistant.
 
 ```mermaid
 flowchart LR
@@ -8,10 +8,11 @@ flowchart LR
     API --> DB[(Local SQLite)]
     API --> KC[macOS Keychain]
     API --> P[Public market sources]
-    API --> O[OpenAI Responses API]
+    API --> L[Local Ollama HTTP API]
+    API --> O[Optional OpenAI Responses API]
 ```
 
-`desk.py` assembles dated public observations from independent feeds. Each cache entry has a retrieval time, freshness state and source. `openai_research.py` handles generation testing, model discovery, research scores, validation and credential storage. Research prompts are built from a public-field allowlist. Scores and the evidence cited by the model are stored together. A missing optional feed can reduce the evidence available for a stock.
+`desk.py` assembles dated public observations from independent feeds. Each cache entry has a retrieval time, freshness state and source. `openai_research.py` handles generation testing, model discovery, research scores, validation and credential storage. `local_ai.py` selects the provider and verifies a local generation before saving a model. Its Ollama client uses the loopback address. `projections.py` derives calendar paths from observed market data. Research prompts are built from a public-field allowlist. Scores and the evidence cited by the model are stored together. A missing optional feed can reduce the evidence available for a stock.
 
 `assistant.py` describes the allowed product actions. The model returns structured operations and the browser dispatches them to the same local APIs used by the manual controls. Local portfolio calculations consume local account records and render in the chat. Destructive actions display a confirmation. Imports use the file selection and preview interfaces. The assistant can select a chart tool, place a dated drawing, change a layout, export bars, compare stocks and control replay.
 

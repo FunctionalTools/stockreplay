@@ -40,17 +40,20 @@ def validate_range(preset, start=None, end=None):
     return first, last
 
 
+US_EQUITY_EXCHANGES = {
+    "NMS",
+    "NYQ",
+    "NGM",
+    "NCM",
+    "PCX",
+    "ASE",
+    "BTS",
+    "PNK",
+}
+
+
 def us_equity(series):
-    return series.get("exchange") in {
-        "NMS",
-        "NYQ",
-        "NGM",
-        "NCM",
-        "PCX",
-        "ASE",
-        "BTS",
-        "PNK",
-    } or (
+    return series.get("exchange") in US_EQUITY_EXCHANGES or (
         series.get("timezone") == "America/New_York"
         and series.get("instrument_type") in (None, "EQUITY", "ETF", "INDEX", "MUTUALFUND")
     )

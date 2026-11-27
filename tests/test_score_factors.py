@@ -144,6 +144,7 @@ def test_public_financial_observations_preserve_units_period_dates_and_missing_v
         "revenueGrowth": 0.125,
         "trailingPE": 15.91,
     }
+    monkeypatch.setattr(desk.PublicResearch, "lookup", lambda *args, **kwargs: {"evidence": [], "coverage": []})
     monkeypatch.setattr(desk, "company", lambda s: sample)
     monkeypatch.setattr(desk, "chart_data", lambda *args: None)
     for attr in (

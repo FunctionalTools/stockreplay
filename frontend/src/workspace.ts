@@ -1,4 +1,4 @@
-export type Page = 'Research' | 'Watchlists' | 'Portfolio' | 'Settings'
+export type Page = 'Research' | 'Watchlists' | 'Portfolio' | 'Settings' | 'Calendar'
 export type Preferences = {
   appearance: 'system' | 'light' | 'dark'
   accent: 'forest' | 'ocean' | 'violet' | 'amber'
@@ -13,7 +13,9 @@ export const firstPreferences: Preferences = {
   home_mode: 'portfolio',
   home_symbol: 'SPY',
 }
+export type AIProvider = 'ollama' | 'openai'
 export type Connection = {
+  provider: AIProvider
   configured: boolean
   verified: boolean
   verified_at: string | null
@@ -29,7 +31,11 @@ export type Source = {
   source: string
   url: string
   excerpt?: string | null
-  date_kind?: 'close' | 'published' | 'retrieved'
+  scope?: string
+  discovered_via?: string
+  date_origin?: string
+  read_note?: string
+  date_kind?: 'close' | 'published' | 'retrieved' | 'indexed'
   period_end?: string
   stale?: boolean
   related?: { url: string; label: string }[]
@@ -71,6 +77,10 @@ export const shortDay = (v?: string | null) =>
         timeZone: 'UTC',
       })
     : 'Date unavailable'
+export function sourceDate(source: Pick<Source, 'date' | 'date_kind'>) {
+  const labels = { published: 'Published', retrieved: 'Checked', indexed: 'Indexed', close: 'Close' }
+  return (source.date_kind ? labels[source.date_kind] + ' ' : '') + shortDay(source.date)
+}
 export const amount = (value?: number | null, currency?: string | null) =>
   value == null
     ? '—'

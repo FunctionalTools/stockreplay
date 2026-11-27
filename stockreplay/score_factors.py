@@ -19,6 +19,7 @@ FACTORS = {
     "targets": "Analyst price targets",
     "analysts": "Analyst opinions",
     "company_news": "Company news",
+    "filings": "Company filings and disclosures",
     "sector": "Sector conditions",
     "market": "Broad market conditions",
     "macro": "Rates, volatility and policy",

@@ -3,7 +3,6 @@ import csv
 import hashlib
 import zlib
 import io
-import re
 import threading
 from contextlib import asynccontextmanager
 from datetime import date as Date
@@ -14,6 +13,7 @@ from fastapi import APIRouter
 from pydantic import Field, field_validator
 
 from . import assistant
+from .local_ai import LocalModel, ProviderChoice, Providers
 from .chat_history import register_chat_history
 from .market import read_csv
 from .desk import Desk, INTERVALS, SCREENS, parallel, safe_url, screen
@@ -23,14 +23,10 @@ from .openai_research import KeySettings, ModelLookup, OpenAIResearch
 from .custom_tabs import register_tabs
 from .schema import Model
 from .store import now
+from .market_events import register_events
+from .symbols import ticker
 from .price_ranges import price_range, validate_range
-
-
-def ticker(raw):
-    value = raw.strip().upper()
-    if not re.fullmatch(r"[A-Z0-9^][A-Z0-9.^=\-]{0,19}", value):
-        raise ValueError("Enter a valid market symbol.")
-    return value
+from .projections import project_symbols
 
 
 class Preferences(Model):
@@ -116,7 +112,11 @@ class Terminal:
         self.db = db
         self.desk = Desk(db)
         self.holdings = Holdings(db)
+        with db.connect() as c:
+            legacy_table = c.execute("select 1 from sqlite_master where type='table' and name='openai_settings'").fetchone()
+            legacy = bool(legacy_table and c.execute("select 1 from openai_settings where remember=1").fetchone())
         self.openai = OpenAIResearch(db)
+        self.ai = Providers(db,self.openai,legacy)
         self.check_lock = threading.Lock()
         with db.connect() as c:
             c.executescript("""
@@ -238,6 +238,7 @@ def register(app, db):
     r = APIRouter(prefix="/api", lifespan=lifespan)
 
     register_chat_history(r, db)
+    register_events(r, t.desk, ticker)
 
     defaults = {
         "appearance": "system",
@@ -285,6 +286,22 @@ def register(app, db):
             c.execute("insert or replace into preferences values(1,?)", (json.dumps(result),))
         return result
 
+    @r.get("/ai")
+    def active_ai():
+        return t.ai.active().status()
+
+    @r.patch("/ai")
+    def select_ai(choice: ProviderChoice):
+        return t.ai.select(choice.provider)
+
+    @r.get("/ai/ollama/models")
+    def local_models():
+        return t.ai.ollama.models()
+
+    @r.put("/ai/ollama")
+    def configure_local(item: LocalModel):
+        return t.ai.configure_ollama(item.model)
+
     @r.get("/openai/models")
     def models(discover: bool = False):
         return t.openai.models(discover)
@@ -296,13 +313,23 @@ def register(app, db):
     @r.post("/assistant")
     def assistant_plan(chat: assistant.Chat):
         chat.symbol = ticker(chat.symbol)
-        return assistant.plan(t.openai, chat)
+        return assistant.plan(t.ai.active(), chat)
 
     @r.post("/assistant/research/{symbol}")
     def answer_question(symbol: str, item: assistant.Question):
         assistant.reject_key(item.question)
-        credentials = t.openai.credentials()
-        return assistant.research_question(t.openai, t.desk.briefing(ticker(symbol)), item.question, credentials)
+        gateway = t.ai.active()
+        symbol = ticker(symbol)
+        if assistant.asks_for_sources(item.question):
+            brief = t.desk.web_research(symbol, item.question)
+            if not brief["evidence"] or not gateway.status()["configured"]:
+                return assistant.source_reply(brief, item.question)
+        else:
+            credentials = gateway.credentials()
+            return assistant.research_question(
+                gateway, t.desk.briefing(symbol), item.question, credentials
+            )
+        return assistant.research_question(gateway, brief, item.question)
 
     @r.get("/prices/imports")
     def imports():
@@ -387,6 +414,16 @@ def register(app, db):
     def chart(symbol: str, interval: str = "1d", span: str = "2y", refresh: bool = False):
         return t.desk.chart(ticker(symbol), interval, span, refresh)
 
+    @r.get("/desk/projections")
+    def projections(
+        symbols: str,
+        horizon: str = "1mo",
+        seed: int = 42,
+        refresh: bool = False,
+        as_of: Date | None = None,
+    ):
+        return project_symbols(t.desk, symbols.split(","), horizon, seed, refresh, as_of)
+
     @r.get("/desk/range/{symbol}")
     def selected_range(
         symbol: str,
@@ -432,15 +469,21 @@ def register(app, db):
         t.update("delete from public_grades where id=?", (key,), "Disclosure not found.")
         return {"deleted": key}
 
+    @r.post("/desk/web-research/{symbol}")
+    def search_public_sources(symbol: str, item: assistant.Question):
+        assistant.reject_key(item.question)
+        return t.desk.web_research(ticker(symbol), item.question, public_topic=True)
+
     @r.get("/desk/brief/{symbol}")
     def brief(symbol: str, refresh: bool = False):
         return t.desk.briefing(ticker(symbol), refresh)
 
     @r.post("/desk/recommend/{symbol}")
     def recommend(symbol: str):
-        t.openai.credentials()
+        gateway=t.ai.active()
+        credentials=gateway.credentials()
         symbol = ticker(symbol)
-        answer = t.openai.recommend(t.desk.briefing(symbol))
+        answer = gateway.recommend(t.desk.briefing(symbol),credentials)
         key = uuid4().hex
         t.update(
             "insert into market_recommendations values(?,?,?,?)",
@@ -470,7 +513,7 @@ def register(app, db):
 
     @r.put("/openai")
     def key_set(settings: KeySettings):
-        return t.openai.set(settings)
+        return t.ai.configure_openai(settings)
 
     @r.delete("/openai")
     def key_forget():

@@ -122,6 +122,7 @@ def test_chat_rejects_secrets_without_echo_or_mutation(tmp_path):
 def test_planner_returns_controlled_links_and_compact_text(tmp_path, monkeypatch):
     captured = []
     with TestClient(create_app(tmp_path)) as c:
+        c.patch("/api/ai", json={"provider": "openai"})
         gateway = c.app.state.terminal.openai
         monkeypatch.setattr(gateway, "credentials", lambda: ("intercepted", "gpt-4.1-mini"))
 
@@ -209,6 +210,7 @@ def test_planner_returns_controlled_links_and_compact_text(tmp_path, monkeypatch
 
 def test_chat_research_caps_words_and_attributes_evidence(monkeypatch, tmp_path):
     with TestClient(create_app(tmp_path)) as c:
+        c.patch("/api/ai", json={"provider": "openai"})
         gateway = c.app.state.terminal.openai
         monkeypatch.setattr(gateway, "credentials", lambda: ("intercepted", "gpt-4.1-mini"))
         docs = [

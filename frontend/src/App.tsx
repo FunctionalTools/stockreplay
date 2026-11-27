@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { Bookmark, BriefcaseBusiness, ChartNoAxesCombined, Settings as Gear } from 'lucide-react'
 import { Research } from './Research'
+import { ForecastCalendar } from './ForecastCalendar'
+import { calendarHref, calendarSelection, type CalendarSelection } from './forecastCalendar'
 import { SearchStock } from './SearchStock'
 import { ResearchHome, type HomeContext } from './ResearchHome'
 import { validRangeFocus } from './ResearchRange'
@@ -23,7 +25,7 @@ import {
   type Intent,
 } from './workspace'
 
-const pages: Page[] = ['Research', 'Watchlists', 'Portfolio', 'Settings']
+const pages: Page[] = ['Research', 'Watchlists', 'Portfolio', 'Settings', 'Calendar']
 const nav = [
   { name: 'Research' as const, icon: ChartNoAxesCombined },
   { name: 'Watchlists' as const, icon: Bookmark },
@@ -34,6 +36,7 @@ const deepLinks: Record<Page, string[]> = {
   Portfolio: ['import-guide', 'holdings', 'prices', 'account'],
   Watchlists: ['watchlist'],
   Settings: [],
+  Calendar: [],
 }
 function allowsFocus(page: Page, focus: string) {
   return (
@@ -41,7 +44,8 @@ function allowsFocus(page: Page, focus: string) {
   )
 }
 function readRoute() {
-  const parts = location.hash.replace(/^#\/?/, '').split('/')
+  const [path, query = ''] = location.hash.replace(/^#\/?/, '').split('?')
+  const parts = path.split('/')
   const tabId = parts[0] === 'tabs' && /^[0-9a-f]{32}$/.test(parts[1] || '') ? parts[1] : ''
   const page = pages.find((p) => p.toLowerCase() === parts[0]) || 'Research'
   let ticker = ''
@@ -52,6 +56,7 @@ function readRoute() {
   }
   return {
     page,
+    query,
     symbol: tickerPattern.test(ticker) ? ticker : '',
     tabId,
     focus: !tabId && allowsFocus(page, parts[2] || '') ? parts[2] : '',
@@ -82,7 +87,7 @@ export default function App() {
   const opening =
     !ready ||
     (!route.tabId &&
-      page === 'Research' &&
+      (page === 'Research' || page === 'Calendar') &&
       !route.symbol &&
       prefs.home_mode === 'portfolio' &&
       !home &&
@@ -98,7 +103,7 @@ export default function App() {
   }, [reloadHome])
   useEffect(() => {
     let active = true
-    void Promise.allSettled([api<Preferences>('/preferences'), api<Connection>('/openai')]).then(
+    void Promise.allSettled([api<Preferences>('/preferences'), api<Connection>('/ai')]).then(
       ([p, c]) => {
         if (!active) return
         if (p.status === 'fulfilled') {
@@ -129,7 +134,7 @@ export default function App() {
   useEffect(() => {
     if (page !== 'Settings' || !ready) return
     let active = true
-    void api<Connection>('/openai')
+    void api<Connection>('/ai')
       .then((value) => {
         if (active) connected(value)
       })
@@ -159,6 +164,7 @@ export default function App() {
   function go(p: Page, s?: string, focus = '') {
     const next = {
       page: p,
+      query: '',
       symbol: (s || (focus ? symbol : p === 'Research' ? '' : route.symbol)).toUpperCase(),
       tabId: '',
       focus: allowsFocus(p, focus) ? focus : '',
@@ -172,6 +178,11 @@ export default function App() {
     setRoute(next)
     setIntent((v) => ({ kind: focus, seq: v.seq + 1 }))
     if (!focus) window.scrollTo(0, 0)
+  }
+  function changeCalendar(selection: CalendarSelection) {
+    const href = calendarHref(selection)
+    if (location.hash !== href) history.pushState(null, '', href)
+    setRoute(readRoute())
   }
   function selectTicker(s: string) {
     void save({ home_mode: 'ticker', home_symbol: s }).catch((e) => fail(errorText(e)))
@@ -188,7 +199,7 @@ export default function App() {
     }
     if (!/^[0-9a-f]{32}$/.test(id)) return
     if (location.hash !== tabHref(id)) history.pushState(null, '', tabHref(id))
-    setRoute({ page: 'Research', symbol: route.symbol, tabId: id, focus: '' })
+    setRoute({ page: 'Research', query: '', symbol: route.symbol, tabId: id, focus: '' })
     setIntent((v) => ({ kind: '', seq: v.seq + 1 }))
     window.scrollTo(0, 0)
   }
@@ -297,6 +308,12 @@ export default function App() {
                   intent={intent}
                 />
               </>
+            )}
+            {page === 'Calendar' && (
+              <ForecastCalendar
+                selection={calendarSelection(symbol, route.query)}
+                change={changeCalendar}
+              />
             )}
             {page === 'Watchlists' && (
               <Watchlists

@@ -7,6 +7,10 @@ on:
         description: Verify current public prices, news and analyst estimates
         type: boolean
         default: false
+      live_ollama:
+        description: Download a free local model and exercise sourced generation on Apple silicon
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
@@ -66,7 +70,7 @@ jobs:
           STOCKREPLAY_PUBLIC_LIVE: "1"
           STOCKREPLAY_LIVE_TESTS: "1"
         run: |
-          .venv/bin/python -m pytest -q -s tests/test_terminal.py::test_live_public_sources tests/test_live_research.py
+          .venv/bin/python -m pytest -q -s tests/test_terminal.py::test_live_public_sources tests/test_live_research.py tests/test_web_research.py::test_live_company_lookup_reads_actual_documents tests/test_market_events.py::test_live_senate_agenda_and_upcoming_market_events
       - name: Verify live market research in the browser
         if: always() && github.event_name == 'workflow_dispatch' && inputs.live_providers && matrix.runner == 'macos-15'
         env:
@@ -77,3 +81,40 @@ jobs:
         env:
           STOCKREPLAY_TEST_OPENAI_KEY: ${{ secrets.STOCKREPLAY_TEST_OPENAI_KEY }}
         run: .venv/bin/python -m pytest -q -rs tests/test_terminal.py -k live_openai_generation
+  local-generation:
+    name: Free local generation on Apple silicon
+    if: github.event_name == 'workflow_dispatch' && inputs.live_ollama
+    runs-on: macos-15
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v6
+      - name: Install StockReplay backend
+        run: uv sync --frozen
+      - name: Run the free model against live public evidence
+        shell: bash
+        env:
+          OLLAMA_NO_CLOUD: "1"
+          OLLAMA_HOST: "127.0.0.1:11434"
+          STOCKREPLAY_LIVE_OLLAMA: "1"
+          STOCKREPLAY_TEST_OLLAMA_MODEL: qwen2.5:3b
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/ollama-runtime"
+          cd "$RUNNER_TEMP/ollama-runtime"
+          curl -fsSL --retry 3 -o ollama-darwin.tgz https://github.com/ollama/ollama/releases/download/v0.40.19/ollama-darwin.tgz
+          echo 'c335802128e9ac33fc0599fa9da661c3d44fbe0dc0176bb6a2f4134386205942  ollama-darwin.tgz' | shasum -a 256 -c -
+          tar -xzf ollama-darwin.tgz
+          executable="$PWD/ollama"
+          test -x "$executable"
+          export OLLAMA_MODELS="$RUNNER_TEMP/ollama-models"
+          "$executable" serve > "$RUNNER_TEMP/ollama-server.log" 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          curl --retry 20 --retry-connrefused --retry-delay 1 -fsS "http://$OLLAMA_HOST/api/version"
+          "$executable" pull "$STOCKREPLAY_TEST_OLLAMA_MODEL"
+          cd "$GITHUB_WORKSPACE"
+          .venv/bin/python -m pytest -q -s tests/test_live_ollama.py tests/test_local_ai.py::test_real_local_model_uses_the_generation_paths
