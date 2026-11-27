@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { CalendarDays, ChevronLeft, ChevronRight, List } from 'lucide-react'
 import { shortDay } from './workspace'
 import { SourceLink } from './deskCommon'
-import { dayTime, type MarketEvent } from './forecastCalendar'
+import { dayTime, type MarketEvent } from './forecastData'
 
 export function EventCard({ event, compact = false }: { event: MarketEvent; compact?: boolean }) {
   return (

@@ -4,7 +4,7 @@ import {
   calendarSelection,
   latestSharedClose,
   type Forecast,
-} from './forecastCalendar'
+} from './forecastData'
 
 const history = (dates: string[]) =>
   ({ history: dates.map((date, i) => ({ date, price: 10 + i })) }) as Forecast

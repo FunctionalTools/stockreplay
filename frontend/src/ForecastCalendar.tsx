@@ -14,7 +14,7 @@ import {
   type Horizon,
   type MarketEvent,
   type Projections,
-} from './forecastCalendar'
+} from './forecastData'
 import { ForecastChart, lineColors } from './ForecastChart'
 import { ForecastEvents } from './ForecastEvents'
 import './forecastCalendar.css'

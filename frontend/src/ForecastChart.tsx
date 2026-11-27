@@ -3,7 +3,7 @@ import { ChevronLeft, ChevronRight, Pause, Play, X } from 'lucide-react'
 import { EventCard } from './ForecastEvents'
 import { marketPrice } from './PricePlot'
 import { shortDay } from './workspace'
-import { dayTime, latestSharedClose, type MarketEvent, type Forecast } from './forecastCalendar'
+import { dayTime, latestSharedClose, type MarketEvent, type Forecast } from './forecastData'
 
 export const lineColors = [
   'var(--accent)',
