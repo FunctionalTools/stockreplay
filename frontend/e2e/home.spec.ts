@@ -100,3 +100,36 @@ test('a portfolio import, edit and removal update the Research homepage without 
   await ticker(page, result.portfolio_symbol || 'SPY')
   await expect(page.getByRole('button', { name: 'Research holding META in USD' })).toHaveCount(0)
 })
+
+test('ticker suggestions support pointer selection, keyboard selection and outside dismissal', async ({
+  page,
+}) => {
+  await page.route('**/api/symbols?*online=true', (route) =>
+    route.fulfill({ json: [{ symbol: 'AAPL', name: 'Apple Inc.' }] }),
+  )
+  await page.goto('/#/research/SPY')
+  const field = page.getByRole('textbox', { name: 'Search stocks' })
+  const result = page.getByRole('button', { name: 'AAPL Apple Inc.' })
+  await field.fill('App')
+  await expect(result).toBeVisible()
+  await result.hover()
+  await page.mouse.down()
+  await expect(field).toBeFocused()
+  await page.mouse.up()
+  await ticker(page, 'AAPL')
+  await field.fill('App')
+  await expect(result).toBeVisible()
+  await page.getByRole('heading', { name: 'Research a ticker' }).click()
+  await expect(result).toHaveCount(0)
+  await field.focus()
+  await expect(result).toBeVisible()
+  await result.focus()
+  await page.keyboard.press('Escape')
+  await expect(result).toHaveCount(0)
+  await field.focus()
+  await expect(result).toBeVisible()
+  await result.focus()
+  await page.keyboard.press('Enter')
+  await expect(field).toHaveValue('')
+  await expect(result).toHaveCount(0)
+})

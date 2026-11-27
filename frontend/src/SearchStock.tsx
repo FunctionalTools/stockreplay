@@ -124,6 +124,12 @@ export function SearchStock({ select }: { select: (s: string) => void }) {
       onBlur={(e) => {
         if (!e.currentTarget.contains(e.relatedTarget)) dismiss()
       }}
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') {
+          dismiss()
+          field.current?.blur()
+        }
+      }}
     >
       <form
         onSubmit={(e) => {
@@ -143,12 +149,6 @@ export function SearchStock({ select }: { select: (s: string) => void }) {
           maxLength={70}
           onChange={(e) => edit(e.target.value)}
           onFocus={() => show(true)}
-          onKeyDown={(e) => {
-            if (e.key === 'Escape') {
-              dismiss()
-              field.current?.blur()
-            }
-          }}
         />
         {text ? (
           <button
@@ -167,7 +167,14 @@ export function SearchStock({ select }: { select: (s: string) => void }) {
         )}
       </form>
       {focused && text && (
-        <div className="suggest" aria-busy={busy}>
+        <div
+          className="suggest"
+          aria-busy={busy}
+          onMouseDown={(e) => {
+            // Safari blurs the input before click without focusing the pressed button.
+            if (e.button === 0 && (e.target as Element).closest('button')) e.preventDefault()
+          }}
+        >
           <button onClick={() => void submit()}>
             {busy ? 'Looking up ticker…' : 'Search for “' + text + '”'}
           </button>
