@@ -40,6 +40,37 @@ def live_evidence():
     }
 
 
+def verify_two_widget_tab(c):
+    reply = c.post(
+        "/api/assistant",
+        json={
+            "page": "Research",
+            "symbol": "AAPL",
+            "messages": [
+                {
+                    "role": "user",
+                    "text": "Create a tab called Weekend for a one-year Apple chart and NVIDIA news.",
+                }
+            ],
+        },
+    )
+    assert reply.is_success, reply.text
+    actions = reply.json()["actions"]
+    assert len(actions) == 1
+    action = actions[0]
+    assert (
+        action["kind"] == "tab" and action["name"] == "Weekend" and action["operation"] == "create"
+    )
+    blocks = [
+        {"view": "chart", "value": "AAPL", "span": "1y"},
+        {"view": "news", "value": "NVDA", "span": "1y"},
+    ]
+    assert action["blocks"] == blocks
+    saved = c.post("/api/tabs", json={"title": action["name"], "blocks": action["blocks"]})
+    assert saved.is_success, saved.text
+    assert c.get("/api/tabs/" + saved.json()["id"]).json()["blocks"] == blocks
+
+
 def native_transport(requests, offline=False, corrupt=False, unsupported_claim=False):
     def respond(req):
         assert str(req.url).startswith("http://127.0.0.1:11434/api/")
@@ -86,6 +117,16 @@ def native_transport(requests, offline=False, corrupt=False, unsupported_claim=F
         inputs = json.loads(body["messages"][1]["content"])
         if "result" in fields:
             result = {"result": "ready"}
+        elif "tab_title" in fields:
+            assert set(fields) == {"tab_title", "chart_1", "news_2"}
+            assert fields["chart_1"]["properties"]["value"]["enum"] == ["AAPL"]
+            assert fields["chart_1"]["properties"]["span"]["enum"] == ["1y"]
+            assert fields["news_2"]["properties"]["value"]["enum"] == ["NVDA"]
+            result = {
+                "tab_title": "Weekend",
+                "chart_1": {"value": "AAPL", "span": "1y"},
+                "news_2": {"value": "NVDA"},
+            }
         elif "actions" in fields:
             result = {
                 "reply": "",
@@ -183,6 +224,7 @@ def test_new_install_local_generation_archive_planner_and_credential_isolation(
         plan = c.post("/api/assistant", json=ask)
         assert plan.is_success, plan.text
         assert plan.json()["actions"][0]["kind"] == "tab"
+        verify_two_widget_tab(c)
         qa = c.post(
             "/api/assistant/research/ACME", json={"question": "Which risks appear in the evidence?"}
         )
@@ -259,23 +301,7 @@ def test_real_local_model_uses_the_generation_paths(tmp_path, monkeypatch):
             json={"question": "What does the company say about demand?"},
         )
         assert qa.is_success and qa.json()["sources"], qa.text
-        plan = c.post(
-            "/api/assistant",
-            json={
-                "page": "Research",
-                "symbol": "ACME",
-                "messages": [
-                    {
-                        "role": "user",
-                        "text": "Create a tab named Weekend with an ACME chart for one year.",
-                    }
-                ],
-            },
-        )
-        assert plan.is_success and any(
-            a["kind"] == "tab" and a["operation"] == "create" and a["blocks"]
-            for a in plan.json()["actions"]
-        ), plan.text
+        verify_two_widget_tab(c)
         result = c.post("/api/desk/recommend/ACME")
         assert result.is_success, result.text
         data = result.json()

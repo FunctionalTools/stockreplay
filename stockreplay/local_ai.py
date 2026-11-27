@@ -10,6 +10,7 @@ import httpx
 from fastapi import HTTPException
 from pydantic import Field
 
+from .assistant_shortcuts import ALIASES, KNOWN, PERIODS
 from .openai_research import (
     array,
     choices,
@@ -21,6 +22,7 @@ from .openai_research import (
 from .schema import Model
 from .score_factors import CONTEXT, DIRECTIONS, FACTORS, factor_key, older, usable
 from .store import now
+from .symbols import NAMES
 
 RECOMMENDED = "qwen2.5:3b"
 ORIGIN = "http://127.0.0.1:11434"
@@ -49,10 +51,13 @@ def is_local_name(name):
 
 
 def remote_description(data):
+    details = data.get("details") or {}
     return bool(
         data.get("remote_host")
         or data.get("remote_model")
-        or (data.get("details") or {}).get("remote_model")
+        or not isinstance(details, dict)
+        or details.get("remote_model")
+        or details.get("remote_host")
     )
 
 
@@ -101,9 +106,9 @@ def valid_shape(value, spec):
     if kind == "string":
         return spec.get("minLength", 0) <= len(value) <= spec.get("maxLength", 10000)
     if kind in {"integer", "number"}:
-        return math.isfinite(value) and spec.get("minimum", float("-inf")) <= value <= spec.get(
-            "maximum", float("inf")
-        )
+        if isinstance(value, float) and not math.isfinite(value):
+            return False
+        return spec.get("minimum", float("-inf")) <= value <= spec.get("maximum", float("inf"))
     return True
 
 
@@ -277,7 +282,8 @@ class OllamaResearch:
                         "num_predict": min(budget * (1 + attempt), 3600),
                     },
                 },
-                timeout=240,
+                # The local runner can queue this behind another window’s assessment.
+                timeout=360,
             )
             try:
                 if data.get("done") is not True or data.get("done_reason") == "length":
@@ -361,7 +367,6 @@ class OllamaResearch:
             raise HTTPException(
                 409, listing.get("error") or "Choose an installed local chat model in Settings."
             )
-        self.check_model(model)
         self.generate(
             model,
             object_schema({"result": choices("ready")}),
@@ -370,6 +375,127 @@ class OllamaResearch:
             70,
         )
         return model
+
+    def tab_widgets(self, model, message, symbol):
+        """Request one required result per explicitly listed widget, in the user's order."""
+        layout = re.search(
+            r"\b(?:tab|dashboard)\b.*?\b(?:with|for|including|containing|showing)\s+(.+)",
+            message,
+            re.IGNORECASE,
+        )
+        if not layout:
+            return None
+        words = {
+            "chart": r"charts?|graphs?|plots?|comparisons?",
+            "news": r"news|articles?|headlines",
+            "ratings": r"ratings?|analyst opinions?",
+            "scores": r"scores?",
+            "watchlist": r"watch\s?lists?",
+            "portfolio": r"portfolio|holdings",
+            "note": r"notes?",
+        }
+        view_pattern = re.compile(
+            "|".join(rf"(?P<{view}>\b(?:{aliases})\b)" for view, aliases in words.items()),
+            re.IGNORECASE,
+        )
+        sections = []
+        carry = ""
+        for bit in re.split(r"\s+(?:and|plus|along with)\s+|\s*,\s*", layout[1]):
+            clause = (carry + " " + bit).strip()
+            match = view_pattern.search(clause)
+            if match:
+                sections.append((match.lastgroup, clause))
+                carry = ""
+            else:
+                carry = clause
+        if not 2 <= len(sections) <= 20:
+            return None
+        if carry:
+            view, clause = sections[-1]
+            sections[-1] = (view, clause + " " + carry)
+        fields = {"tab_title": {"type": "string", "minLength": 1}}
+        named = re.search(
+            r"\b(?:called|named)\s+(.+?)\s+(?:with|for|including|containing|showing)\b",
+            message,
+            re.IGNORECASE,
+        )
+        if named:
+            title = named[1].strip(' "“”')
+            if 0 < len(title) <= 80:
+                fields["tab_title"] = choices(title)
+        prompts = {}
+        for index, (view, clause) in enumerate(sections, 1):
+            slot = f"{view}_{index}"
+            assets = [
+                ticker
+                for ticker, company in NAMES.items()
+                if any(
+                    re.search(rf"(?<![\w.]){re.escape(term)}(?![\w.])", clause, re.IGNORECASE)
+                    for term in (ticker, company)
+                )
+            ]
+            value = TEXT
+            if view in {"chart", "news", "ratings", "scores"} and len(assets) == 1:
+                # Unknown symbols or connectors can denote another company in a comparison.
+                known_words = {
+                    word.upper() for ticker in assets for word in NAMES[ticker].split()
+                } | set(assets)
+                extra = set(re.findall(r"\b[A-Z]{2,6}\b", clause)) - known_words - {"YTD", "MAX"}
+                if not extra and not re.search(
+                    r"\b(compare|versus|vs|both)\b", clause, re.IGNORECASE
+                ):
+                    value = choices(assets[0])
+            if view == "portfolio":
+                value = choices("")
+            properties = {"value": value}
+            if view == "chart":
+                dates = re.findall(r"\b\d{4}-\d{2}-\d{2}\b", clause)
+                normalized = clause.casefold().replace("-", " ")
+                found = {
+                    preset
+                    for alias, preset in ALIASES.items()
+                    if re.search(rf"\b{re.escape(alias)}\b", normalized)
+                }
+                spans = (
+                    ["/".join(dates)]
+                    if len(dates) == 2
+                    else sorted(found)
+                    if found
+                    else list(PERIODS)
+                )
+                properties["span"] = choices(*spans)
+            fields[slot] = object_schema(properties)
+            prompts[slot] = clause
+        result = self.generate(
+            model,
+            object_schema(fields),
+            "Build the stock research dashboard requested by the user. Fill every required slot in order. Chart takes one or more comma-separated ticker symbols and a span (1d, 5d, 1mo, 3mo, 6mo, ytd, 1y, 2y, 5y, 10y, max, or YYYY-MM-DD/YYYY-MM-DD; default 1y). News, scores and ratings take a ticker symbol. Watchlist uses its requested local name or empty, portfolio uses empty, note uses the requested text. Preserve the requested tab title.",
+            {"request": message, "current_symbol": symbol, "widgets": prompts},
+            min(2000, 180 + 100 * len(sections)),
+        )
+        blocks = []
+        for (view, _), slot in zip(sections, prompts):
+            data = result[slot]
+            value = data["value"]
+            if view in {"chart", "news", "ratings", "scores"}:
+                value = ",".join(
+                    KNOWN.get(v.strip().casefold(), v.strip()) for v in value.split(",")
+                )
+            blocks.append({"view": view, "value": value, "span": data.get("span", "1y")})
+        return {
+            "reply": "",
+            "actions": [
+                {
+                    "tab": {
+                        "operation": "create",
+                        "name": result["tab_title"],
+                        "value": "",
+                        "blocks": blocks,
+                    }
+                }
+            ],
+            "links": [],
+        }
 
     def plan(self, model, schema, instructions, inputs):
         # Narrow large union grammars for small local models; unmatched requests retain the full action vocabulary.
@@ -433,8 +559,17 @@ class OllamaResearch:
             and re.match(
                 r"^(?:(?:please |could you |can you |would you )*)(?:create|build|make)\b", text
             )
-            and not re.search(r"\b(?:then|also|afterwards|if)\b", text)
+            and not re.search(
+                r"\b(?:then|also|afterwards|if)\b|\band (?:change|set|switch|enable|disable|open|delete)\b",
+                text,
+            )
         )
+        if make_tab and not re.search(r"\b(tabs|dashboards)\b", text):
+            planned = self.tab_widgets(model, inputs["messages"][-1]["text"], inputs["symbol"])
+            if planned:
+                with self.lock:
+                    self.verified = (model, now())
+                return planned
         if make_tab and not kinds.intersection({"appearance", "alert", "add_account"}):
             kinds = {"tab"}
         variants = schema["properties"]["actions"]["items"]["anyOf"]
