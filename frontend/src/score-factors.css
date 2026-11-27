@@ -1,0 +1,119 @@
+.score-breakdown {
+  border-block: 1px solid var(--line);
+  margin: 1rem 0;
+}
+.score-breakdown > summary,
+.score-factor > summary {
+  cursor: pointer;
+  padding: 0.8rem 0;
+}
+.score-breakdown > summary > span {
+  font-weight: 650;
+}
+.score-breakdown > summary small {
+  margin-left: 0.75rem;
+  font-size: 0.8rem;
+}
+.score-breakdown .score-breakdown-body > p,
+.legacy-factors,
+.score-breakdown .missing-factors p {
+  font-size: 0.84rem;
+  color: var(--muted);
+}
+.score-factor {
+  border-top: 1px solid var(--line);
+  padding-inline: 0.3rem;
+}
+.score-factor > summary {
+  font-size: 0.9rem;
+  font-weight: 550;
+}
+.score-factor summary small {
+  font-size: 0.7rem;
+  margin-left: 0.5rem;
+  color: var(--muted);
+}
+.factor-directions {
+  display: inline-flex;
+  gap: 0.75rem;
+  float: right;
+  font-size: 0.76rem;
+  color: var(--muted);
+}
+.factor-directions b {
+  font-weight: 600;
+  color: var(--text);
+}
+.factor-body {
+  padding: 0 0.6rem 0.8rem;
+}
+.factor-body dl {
+  margin: 0.35rem 0 0.65rem;
+}
+.factor-body dl div {
+  display: grid;
+  grid-template-columns: 4.7rem 1fr;
+  gap: 0.45rem;
+  margin: 0.25rem 0;
+  font-size: 0.85rem;
+}
+.factor-body dt {
+  font-weight: 650;
+}
+.factor-body dd {
+  margin: 0;
+}
+.factor-body ul {
+  margin: 0;
+  padding: 0.65rem 0.8rem;
+  list-style: none;
+  border-left: 2px solid var(--accent);
+  background: var(--soft);
+  border-radius: 0.2rem;
+  overflow-wrap: anywhere;
+  font-size: 0.78rem;
+}
+.factor-body li + li {
+  margin-top: 0.5rem;
+}
+.factor-attribution,
+.missing-factors ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem 0.7rem;
+}
+.factor-attribution {
+  align-items: baseline;
+  color: var(--muted);
+  margin-top: 0.3rem;
+}
+.missing-factors {
+  padding: 0.8rem 0;
+  border-top: 1px solid var(--line);
+}
+.missing-factors h4,
+.score-breakdown .missing-factors p {
+  margin: 0 0 0.35rem;
+}
+.missing-factors ul {
+  padding: 0;
+  list-style: none;
+  font-size: 0.82rem;
+}
+.missing-factors li {
+  padding: 0.15rem 0.55rem;
+  background: var(--soft);
+  border-radius: 0.25rem;
+}
+@media (max-width: 640px) {
+  .score-breakdown > summary small,
+  .factor-directions {
+    display: flex;
+    float: none;
+    margin: 0.25rem 0 0 1.1rem;
+  }
+}
+
+.factor-observation {
+  display: block;
+}

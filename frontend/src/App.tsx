@@ -1,13 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import {
-  Bookmark,
-  BriefcaseBusiness,
-  ChartNoAxesCombined,
-  Search,
-  Settings as Gear,
-  X,
-} from 'lucide-react'
+import { Bookmark, BriefcaseBusiness, ChartNoAxesCombined, Settings as Gear } from 'lucide-react'
 import { Research } from './Research'
+import { SearchStock } from './SearchStock'
+import { ResearchHome, type HomeContext } from './ResearchHome'
+import { validRangeFocus } from './ResearchRange'
+import { useResource } from './deskCommon'
 import { Watchlists } from './Watch'
 import { HoldingsPage } from './Positions'
 import { PriceFiles } from './PriceFiles'
@@ -38,6 +35,11 @@ const deepLinks: Record<Page, string[]> = {
   Watchlists: ['watchlist'],
   Settings: [],
 }
+function allowsFocus(page: Page, focus: string) {
+  return (
+    deepLinks[page].includes(focus) || (page === 'Research' && !!focus && validRangeFocus(focus))
+  )
+}
 function readRoute() {
   const parts = location.hash.replace(/^#\/?/, '').split('/')
   const tabId = parts[0] === 'tabs' && /^[0-9a-f]{32}$/.test(parts[1] || '') ? parts[1] : ''
@@ -52,116 +54,8 @@ function readRoute() {
     page,
     symbol: tickerPattern.test(ticker) ? ticker : '',
     tabId,
-    focus: !tabId && deepLinks[page].includes(parts[2]) ? parts[2] : '',
+    focus: !tabId && allowsFocus(page, parts[2] || '') ? parts[2] : '',
   }
-}
-function SearchStock({ select }: { select: (s: string) => void }) {
-  const [text, type] = useState(''),
-    [matches, set] = useState<{ symbol: string; name: string }[]>([]),
-    [focus, show] = useState(false),
-    [error, fail] = useState('')
-  const field = useRef<HTMLInputElement>(null)
-  useEffect(() => {
-    const key = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
-        e.preventDefault()
-        field.current?.focus()
-      }
-    }
-    window.addEventListener('keydown', key)
-    return () => window.removeEventListener('keydown', key)
-  }, [])
-  useEffect(() => {
-    let active = true
-    set([])
-    fail('')
-    if (!text.trim()) return
-    const t = setTimeout(() => {
-      void api<{ symbol: string; name: string }[]>(
-        '/symbols?q=' + encodeURIComponent(text.trim()) + '&online=true',
-      )
-        .then((v) => {
-          if (active) set(v)
-        })
-        .catch((e) => {
-          if (active) fail(errorText(e))
-        })
-    }, 240)
-    return () => {
-      active = false
-      clearTimeout(t)
-    }
-  }, [text])
-  function open(s: string) {
-    select(s)
-    type('')
-    show(false)
-    field.current?.blur()
-  }
-  return (
-    <div
-      className="global-search"
-      onBlur={(e) => {
-        if (!e.currentTarget.contains(e.relatedTarget)) show(false)
-      }}
-    >
-      <form
-        onSubmit={(e) => {
-          e.preventDefault()
-          const s = text.trim().toUpperCase()
-          const exact = matches.find((m) => m.symbol === s || m.name.toUpperCase() === s)
-          if (exact) open(exact.symbol)
-          else if (tickerPattern.test(s)) open(s)
-          else if (matches[0]) open(matches[0].symbol)
-          else fail('Enter a ticker or choose a matching company.')
-        }}
-      >
-        <Search size={16} />
-        <input
-          ref={field}
-          aria-label="Search stocks"
-          placeholder="Search stocks"
-          value={text}
-          maxLength={70}
-          onChange={(e) => type(e.target.value)}
-          onFocus={() => show(true)}
-          onKeyDown={(e) => {
-            if (e.key === 'Escape') {
-              show(false)
-              field.current?.blur()
-            }
-          }}
-        />
-        {text ? (
-          <button type="button" className="bare" aria-label="Clear search" onClick={() => type('')}>
-            <X size={14} />
-          </button>
-        ) : (
-          <kbd>⌘ K</kbd>
-        )}
-      </form>
-      {focus && text && (
-        <div className="suggest">
-          <button
-            onClick={() => {
-              const s = text.trim().toUpperCase()
-              if (tickerPattern.test(s)) open(s)
-              else if (matches[0]) open(matches[0].symbol)
-            }}
-          >
-            Search for “{text}”
-          </button>
-          {matches.map((m) => (
-            <button key={m.symbol} onClick={() => open(m.symbol)}>
-              <b>{m.symbol}</b>
-              <small>{m.name}</small>
-            </button>
-          ))}
-          <ErrorBox text={error} />
-        </div>
-      )}
-    </div>
-  )
 }
 export default function App() {
   const [route, setRoute] = useState(readRoute),
@@ -175,24 +69,47 @@ export default function App() {
     pending = useRef(new Map<number, Partial<Preferences>>()),
     writes = useRef(Promise.resolve()),
     writeId = useRef(0)
-  const symbol = route.symbol || prefs.home_symbol,
+  const {
+    data: home,
+    error: homeError,
+    loading: loadingHome,
+    reload: reloadHome,
+  } = useResource<HomeContext>('/home')
+  const startingSymbol =
+      prefs.home_mode === 'ticker' ? prefs.home_symbol : home?.portfolio_symbol || 'SPY',
+    symbol = route.symbol || startingSymbol,
     page = route.page
+  const opening =
+    !ready ||
+    (!route.tabId &&
+      page === 'Research' &&
+      !route.symbol &&
+      prefs.home_mode === 'portfolio' &&
+      !home &&
+      loadingHome)
+  useEffect(() => {
+    const reload = () => reloadHome()
+    window.addEventListener('stockreplay:holdings-changed', reload)
+    window.addEventListener('focus', reload)
+    return () => {
+      window.removeEventListener('stockreplay:holdings-changed', reload)
+      window.removeEventListener('focus', reload)
+    }
+  }, [reloadHome])
   useEffect(() => {
     let active = true
-    void Promise.all([api<Preferences>('/preferences'), api<Connection>('/openai')])
-      .then(([p, c]) => {
-        if (active) {
-          committed.current = p
-          setPrefs(p)
-          connected(c)
-        }
-      })
-      .catch((e) => {
-        if (active) fail(errorText(e))
-      })
-      .finally(() => {
-        if (active) setReady(true)
-      })
+    void Promise.allSettled([api<Preferences>('/preferences'), api<Connection>('/openai')]).then(
+      ([p, c]) => {
+        if (!active) return
+        if (p.status === 'fulfilled') {
+          committed.current = p.value
+          setPrefs(p.value)
+        } else fail(errorText(p.reason))
+        if (c.status === 'fulfilled') connected(c.value)
+        else fail(errorText(c.reason))
+        setReady(true)
+      },
+    )
     const pop = () => {
       const next = readRoute()
       setRoute(next)
@@ -224,6 +141,7 @@ export default function App() {
     }
   }, [page, ready])
   function save(p: Partial<Preferences>) {
+    if (p.home_symbol && !p.home_mode) p = { ...p, home_mode: 'ticker' }
     const id = ++writeId.current
     pending.current.set(id, p)
     setPrefs((previous) => ({ ...previous, ...p }))
@@ -241,16 +159,27 @@ export default function App() {
   function go(p: Page, s?: string, focus = '') {
     const next = {
       page: p,
-      symbol: (s || symbol).toUpperCase(),
+      symbol: (s || (focus ? symbol : p === 'Research' ? '' : route.symbol)).toUpperCase(),
       tabId: '',
-      focus: deepLinks[p].includes(focus) ? focus : '',
+      focus: allowsFocus(p, focus) ? focus : '',
     }
     const newHash =
-      '#/' + p.toLowerCase() + '/' + next.symbol + (next.focus ? '/' + next.focus : '')
+      '#/' +
+      p.toLowerCase() +
+      (next.symbol ? '/' + next.symbol : '') +
+      (next.focus ? '/' + next.focus : '')
     if (location.hash !== newHash) history.pushState(null, '', newHash)
     setRoute(next)
     setIntent((v) => ({ kind: focus, seq: v.seq + 1 }))
     if (!focus) window.scrollTo(0, 0)
+  }
+  function selectTicker(s: string) {
+    void save({ home_mode: 'ticker', home_symbol: s }).catch((e) => fail(errorText(e)))
+    go('Research', s)
+  }
+  function followHoldings() {
+    void save({ home_mode: 'portfolio' }).catch((e) => fail(errorText(e)))
+    go('Research')
   }
   function openTab(id: string) {
     if (!id) {
@@ -259,23 +188,21 @@ export default function App() {
     }
     if (!/^[0-9a-f]{32}$/.test(id)) return
     if (location.hash !== tabHref(id)) history.pushState(null, '', tabHref(id))
-    setRoute({ page: 'Research', symbol, tabId: id, focus: '' })
+    setRoute({ page: 'Research', symbol: route.symbol, tabId: id, focus: '' })
     setIntent((v) => ({ kind: '', seq: v.seq + 1 }))
     window.scrollTo(0, 0)
   }
   useEffect(() => {
     if (route.tabId) return
-    document.title = page === 'Research' ? symbol + ' · StockReplay' : page + ' · StockReplay'
-  }, [page, symbol, route.tabId])
+    document.title = opening
+      ? 'StockReplay'
+      : (page === 'Research' ? symbol : page) + ' · StockReplay'
+  }, [page, symbol, route.tabId, opening])
   return (
     <>
       <header className="topbar">
         <div className="top-inner">
-          <button
-            className="brand"
-            onClick={() => go('Research', prefs.home_symbol)}
-            aria-label="StockReplay home"
-          >
+          <button className="brand" onClick={() => go('Research')} aria-label="StockReplay home">
             <svg width="29" height="29" viewBox="0 0 32 32" aria-hidden="true">
               <rect width="32" height="32" rx="9" fill="var(--accent)" />
               <path
@@ -311,7 +238,7 @@ export default function App() {
             />
           </div>
           <div className="header-right">
-            <SearchStock select={(s) => go('Research', s)} />
+            {(page !== 'Research' || route.tabId) && <SearchStock select={selectTicker} />}
             <button
               className={'icon-btn settings-link ' + (page === 'Settings' ? 'selected' : '')}
               aria-label="Settings"
@@ -325,7 +252,7 @@ export default function App() {
       </header>
       <main id="main">
         <ErrorBox text={err} />
-        {ready && (
+        {!opening && (
           <>
             {route.tabId && (
               <CustomTabView
@@ -338,21 +265,43 @@ export default function App() {
               />
             )}
             {!route.tabId && page === 'Research' && (
-              <Research
-                key={symbol}
-                symbol={symbol}
-                connection={connection}
-                settings={() => go('Settings')}
-                advanced={prefs.advanced}
-                onAdvanced={() => save({ advanced: true })}
-                updateSeq={seq}
-                intent={intent}
-              />
+              <>
+                {homeError && (
+                  <div>
+                    <ErrorBox text={homeError} />
+                    <button className="text-btn" onClick={() => reloadHome()}>
+                      Retry holdings
+                    </button>
+                  </div>
+                )}
+                <ResearchHome
+                  home={home}
+                  mode={prefs.home_mode}
+                  symbol={symbol}
+                  startingSymbol={startingSymbol}
+                  choose={selectTicker}
+                  follow={followHoldings}
+                  guide={() => go('Portfolio', symbol, 'import-guide')}
+                  portfolio={() => go('Portfolio')}
+                >
+                  <SearchStock select={selectTicker} />
+                </ResearchHome>
+                <Research
+                  key={symbol}
+                  symbol={symbol}
+                  connection={connection}
+                  settings={() => go('Settings')}
+                  advanced={prefs.advanced}
+                  onAdvanced={() => save({ advanced: true })}
+                  updateSeq={seq}
+                  intent={intent}
+                />
+              </>
             )}
             {page === 'Watchlists' && (
               <Watchlists
                 key={'w' + seq + intent.seq}
-                go={(_, s) => go('Research', s)}
+                go={(_, s) => (s ? selectTicker(s) : go('Research'))}
                 symbol={symbol}
                 importOnOpen={intent.kind === 'watchlist'}
               />
@@ -368,17 +317,25 @@ export default function App() {
             )}
           </>
         )}
-        {!ready && <p role="status">Opening your workspace…</p>}
+        {opening && <p role="status">Opening your workspace…</p>}
       </main>
       <Assistant
         page={page}
+        portfolioContext={
+          prefs.home_mode === 'portfolio' &&
+          home?.portfolio_symbol === symbol &&
+          (!route.symbol || page !== 'Research' || !!route.tabId)
+        }
         openTab={openTab}
         currentTab={route.tabId || undefined}
         symbol={symbol}
         connection={connection}
         navigate={go}
         save={save}
-        updated={() => refresh((n) => n + 1)}
+        updated={() => {
+          refresh((n) => n + 1)
+          reloadHome()
+        }}
         connected={connected}
       />
     </>

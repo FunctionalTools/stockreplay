@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
 import {
-  ArrowDownRight,
   ArrowUpRight,
   BookmarkPlus,
   ChevronRight,
@@ -8,13 +7,13 @@ import {
   Shield,
   SlidersHorizontal,
   Sparkles,
-  TrendingUp,
 } from 'lucide-react'
-import { api, errorText, pct } from './types'
+import { api, errorText } from './types'
 import { useResource, SourceLink } from './deskCommon'
 import { Busy, ErrorBox, Modal } from './ui'
-import { PricePlot, usePrices } from './PricePlot'
+import { ResearchRange } from './ResearchRange'
 import { ChartDesk } from './ChartDesk'
+import { ScoreFactors } from './ScoreFactors'
 import { NewsPreviews } from './NewsPreviews'
 import { OpenSavedArticles, SavedArticlesMenu } from './SavedArticles'
 import {
@@ -103,7 +102,7 @@ function Distribution({ votes }: { votes: Record<string, number> }) {
     </div>
   )
 }
-function Gauge({ score, risk }: { score: number | undefined; risk?: boolean }) {
+export function Gauge({ score, risk }: { score: number | undefined; risk?: boolean }) {
   const color = risk ? 'var(--risk)' : 'var(--accent)'
   return (
     <div className="gauge">
@@ -174,6 +173,7 @@ export function OpinionDetails({ opinion: o }: { opinion: Opinion }) {
           ))}
         </div>
       </div>
+      <ScoreFactors opinion={o} />
       <details>
         <summary>What would change this view?</summary>
         <Cited point={o.reconsider} sources={o.sources} />
@@ -381,8 +381,7 @@ export function Research({
   const eb = useResource<Brief>('/desk/brief/' + encodeURIComponent(symbol)),
     history = useResource<Opinion[]>('/desk/recommend/' + encodeURIComponent(symbol)),
     lists = useResource<SavedList[]>('/watchlists')
-  const [span, period] = useState('6mo'),
-    [busy, wait] = useState(false),
+  const [busy, wait] = useState(false),
     [message, say] = useState(''),
     [err, fail] = useState(''),
     [watch, setWatch] = useState(false),
@@ -391,12 +390,6 @@ export function Research({
     [layoutRevision, refreshLayout] = useState(0),
     [selected, setSelected] = useState(''),
     [adv, setAdv] = useState(advanced)
-  const prices = usePrices([symbol], span, '', revision),
-    series = prices.series[0],
-    bars = series?.bars,
-    last = bars?.at(-1),
-    prior = bars?.at(-2),
-    diff = last && prior ? 100 * (last.raw_close / prior.raw_close - 1) : null
   const o = history.data?.find((row) => row.id === selected) || history.data?.[0] || null,
     b = eb.data
   const focus = useRef<HTMLElement | null>(null)
@@ -486,7 +479,7 @@ export function Research({
               eb.reload(true)
               refresh((n) => n + 1)
             }}
-            disabled={eb.loading || prices.loading}
+            disabled={eb.loading}
             aria-label="Refresh stock sources"
           >
             <RefreshCw size={15} />
@@ -498,46 +491,7 @@ export function Research({
       </div>
       {message && <p role="status">{message}</p>}
       <div className="research-top">
-        <section className="panel quote-card">
-          <div className="section-head">
-            <div>
-              <small>Last close</small>
-              <div className="quote">{amount(last?.raw_close, series?.currency)}</div>
-            </div>
-            {diff != null && (
-              <span className={'delta ' + (diff >= 0 ? 'up' : 'down')}>
-                {diff >= 0 ? <TrendingUp size={16} /> : <ArrowDownRight size={16} />} {pct(diff)}
-              </span>
-            )}
-          </div>
-          <div className="quote-row">
-            <small>
-              {last
-                ? shortDay(last.date) + ' · ' + (series?.currency || 'currency unreported')
-                : 'Awaiting price history'}
-            </small>
-            <div className="range">
-              {['1mo', '6mo', '1y', '2y', '5y'].map((v) => (
-                <button
-                  key={v}
-                  aria-pressed={span === v}
-                  className={v === span ? 'selected' : ''}
-                  onClick={() => period(v)}
-                >
-                  {v.toUpperCase().replace('MO', 'M')}
-                </button>
-              ))}
-            </div>
-          </div>
-          {prices.loading ? (
-            <div className="plot-wait">
-              <Busy text="Reading price history" />
-            </div>
-          ) : (
-            <PricePlot series={prices.series} />
-          )}
-          <ErrorBox text={prices.errors.join(' ')} />
-        </section>
+        <ResearchRange symbol={symbol} intent={intent} revision={revision} />
         <section id="scores" ref={focus} className="panel scores">
           <div className="section-head">
             <h2>
@@ -558,8 +512,8 @@ export function Research({
             </p>
           ) : (
             <p>
-              Get two independent scores from the news, price history, risk measures and analyst
-              estimates.
+              See how valuation, company finances, market conditions, analyst estimates and news
+              shape two independent scores.
             </p>
           )}
           {connection?.configured ? (

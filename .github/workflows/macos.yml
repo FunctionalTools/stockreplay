@@ -66,7 +66,7 @@ jobs:
           STOCKREPLAY_PUBLIC_LIVE: "1"
           STOCKREPLAY_LIVE_TESTS: "1"
         run: |
-          .venv/bin/python -m pytest -q -s tests/test_terminal.py -k live_public_sources
+          .venv/bin/python -m pytest -q -s tests/test_terminal.py::test_live_public_sources tests/test_live_research.py
       - name: Verify live market research in the browser
         if: always() && github.event_name == 'workflow_dispatch' && inputs.live_providers && matrix.runner == 'macos-15'
         env:

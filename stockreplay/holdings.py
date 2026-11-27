@@ -85,6 +85,8 @@ ALIASES = {
         "share price",
         "unit price",
         "market price",
+        "mark price",
+        "markprice",
         "price per share",
         "price (market price)",
     ],
@@ -92,6 +94,7 @@ ALIASES = {
         "current value",
         "market value",
         "position value",
+        "positionvalue",
         "value",
         "market value (usd)",
         "market value (local)",
@@ -101,27 +104,47 @@ ALIASES = {
     ],
     "basis": [
         "cost basis total",
+        "cost basis money",
+        "costbasismoney",
         "total cost basis",
         "cost basis",
         "total cost",
         "book value",
         "cost basis (total)",
     ],
-    "currency": ["currency", "currency code", "local currency"],
+    "currency": [
+        "currency",
+        "currency code",
+        "local currency",
+        "currency primary",
+        "currencyprimary",
+    ],
     "account_number": [
         "account number",
         "account #",
         "account id",
+        "accountid",
+        "client account id",
+        "clientaccountid",
         "account no.",
         "account",
     ],
-    "account_name": ["account name", "account description", "account nickname"],
+    "account_name": [
+        "account name",
+        "account description",
+        "account nickname",
+        "alias",
+        "account alias",
+        "accountalias",
+    ],
     "as_of": [
         "as of",
         "as of date",
         "price as of date",
         "valuation date",
         "statement date",
+        "report date",
+        "reportdate",
     ],
 }
 
@@ -177,6 +200,44 @@ def csv_positions(stmt):
             "Could not find the positions header. Map the columns from your broker's CSV."
         )
     names = [normalized(x) for x in headers]
+    columns = set(names)
+    activity_dates = {
+        "date",
+        "posting date",
+        "posted date",
+        "transaction date",
+        "trade date",
+        "run date",
+        "settlement date",
+    }
+    activity_amounts = {
+        "debit",
+        "debits",
+        "credit",
+        "credits",
+        "withdrawals",
+        "deposits",
+        "amount",
+        "transaction amount",
+        "amount ($)",
+    }
+    if (
+        columns & activity_dates
+        and columns & activity_amounts
+        and columns
+        & {
+            "balance",
+            "running balance",
+            "ledger balance",
+            "action",
+            "transaction type",
+            "transaction",
+        }
+    ):
+        raise ValueError(
+            "This file contains transaction activity. Export current positions, choose a statement "
+            "with its closing ledger balance, or enter the statement balance."
+        )
     mapped = {}
     for key, aliases in ALIASES.items():
         options = [normalized(stmt.mapping[key])] if stmt.mapping.get(key) else aliases
@@ -422,6 +483,8 @@ class Holdings:
 
     def all(self):
         with self.db.connect() as c:
+            # Read account metadata and positions from the same SQLite snapshot.
+            c.execute("begin")
             accounts = {
                 a["id"]: {**dict(a), "positions": []}
                 for a in c.execute("select * from accounts order by institution,name")

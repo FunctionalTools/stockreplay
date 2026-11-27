@@ -3,7 +3,6 @@ import {
   ArrowUp,
   MessageCircle,
   Minus,
-  Sparkles,
   History,
   SquarePen,
   ChevronLeft,
@@ -14,7 +13,9 @@ import { api, errorText } from './types'
 import { Busy, ErrorBox } from './ui'
 import { useChatHistory, type ChatLink, type Entry, type Context } from './chatHistory'
 import { ChatMessage, ChatAnchor, linkUrl } from './ChatMessage'
+import { ChatResize, setAssistantSize } from './ChatResize'
 import { executeTabAction, isTabAction, prepareTabDelete } from './customTabs'
+import { validRangeFocus } from './ResearchRange'
 import './assistant.css'
 import {
   type Connection,
@@ -27,6 +28,7 @@ import {
 } from './workspace'
 export type Action = {
   kind: string
+  size?: 'compact' | 'large'
   shape?: string
   start_date?: string
   start_price?: number
@@ -63,6 +65,7 @@ export type Action = {
   compare?: string
   panels?: string[]
 }
+type SettingsChange = Partial<Preferences> & { chat_size?: 'compact' | 'large' }
 type Position = {
   id: string
   symbol: string
@@ -74,12 +77,18 @@ type Position = {
   currency: string
   as_of: string | null
 }
-type Account = { id: string; name: string; institution: string; positions: Position[] }
+type Account = {
+  id: string
+  name: string
+  institution: string
+  positions: Position[]
+}
 type Props = {
   page: Page
   symbol: string
   openTab: (id: string) => void
   currentTab?: string
+  portfolioContext?: boolean
   connection: Connection | null
   navigate: (page: Page, symbol?: string, focus?: string) => void
   save: (v: Partial<Preferences>) => Promise<void>
@@ -96,10 +105,12 @@ export function Assistant({
   connected,
   openTab,
   currentTab,
+  portfolioContext = false,
 }: Props) {
   const [open, setOpen] = useState(false),
     [input, type] = useState(''),
     [busy, wait] = useState(false),
+    [phase, setPhase] = useState('Working'),
     [error, fail] = useState(''),
     [menu, setMenu] = useState(false),
     [rename, setRename] = useState<string | null>(null),
@@ -149,7 +160,11 @@ export function Assistant({
     focus: 'import-guide',
     symbol,
   }
-  const settingsLink: ChatLink = { label: 'Open API settings', page: 'Settings', symbol }
+  const settingsLink: ChatLink = {
+    label: 'Open API settings',
+    page: 'Settings',
+    symbol,
+  }
   function target(a: Action): ChatLink | undefined {
     const ticker = a.symbol || symbol
     if (a.kind === 'navigate' && a.page) return { label: 'Open ' + a.page, page: a.page, symbol }
@@ -179,7 +194,18 @@ export function Assistant({
       ].includes(a.kind)
     )
       return { page: 'Watchlists', label: 'View watchlists', symbol }
-    if (['appearance', 'accent', 'advanced', 'home_stock', 'model'].includes(a.kind))
+    if (a.kind === 'range') {
+      const focus = rangeFocus(a.span)
+      return {
+        label: 'View performance',
+        page: 'Research',
+        symbol: ticker,
+        focus,
+      }
+    }
+    if (
+      ['appearance', 'accent', 'advanced', 'home_stock', 'home_portfolio', 'model'].includes(a.kind)
+    )
       return settingsLink
     if (
       [
@@ -244,6 +270,7 @@ export function Assistant({
     } finally {
       requestLock.current = false
       wait(false)
+      setPhase('Working')
     }
   }
   function stock(raw?: string) {
@@ -263,7 +290,57 @@ export function Assistant({
       )
     return hits[0]
   }
-  async function execute(a: Action, confirmed = false, suggested: ChatLink[] = []): Promise<void> {
+  function rangeFocus(span?: string) {
+    const focus = span?.includes('/') ? 'range_custom_' + span.replace('/', '_') : 'range_' + span
+    if (!validRangeFocus(focus))
+      throw Error('Choose a chart range or two dates in YYYY-MM-DD format.')
+    return focus
+  }
+  function preference(a: Action): SettingsChange | null {
+    switch (a.kind) {
+      case 'appearance':
+        return { appearance: a.mode as Preferences['appearance'] }
+      case 'accent':
+        return { accent: a.color }
+      case 'advanced':
+        return { advanced: a.enabled }
+      case 'chat_size':
+        return { chat_size: a.size }
+      case 'home_portfolio':
+        return { home_mode: 'portfolio' }
+      case 'home_stock':
+        return { home_mode: 'ticker', home_symbol: stock(a.symbol) }
+      default:
+        return null
+    }
+  }
+  async function savePreferences({ chat_size, ...p }: SettingsChange, context: Context) {
+    if (Object.keys(p).length) await save(p)
+    if (chat_size) setAssistantSize(chat_size)
+    if (p.home_mode) navigate('Research')
+    const details = [
+      chat_size && chat_size + ' chat window',
+      p.appearance && (p.appearance === 'system' ? 'system appearance' : p.appearance + ' mode'),
+      p.accent && p.accent + ' accent',
+      p.advanced !== undefined && 'advanced tools ' + (p.advanced ? 'on' : 'off'),
+      p.home_mode &&
+        'home set to ' + (p.home_mode === 'portfolio' ? 'your portfolio' : p.home_symbol),
+    ].filter(Boolean)
+    await append(
+      {
+        text: 'Saved ' + details.join(', ') + '.',
+        links: [{ page: 'Settings', label: 'View settings' }],
+      },
+      context,
+    )
+  }
+  async function execute(
+    a: Action,
+    confirmed = false,
+    suggested: ChatLink[] = [],
+    context?: Context,
+  ): Promise<void> {
+    const append = (entry: Parameters<typeof history.append>[0]) => history.append(entry, context)
     const link = target(a),
       links = [...(link ? [link] : []), ...suggested]
     const text = (s: string) => append({ text: s, links }),
@@ -322,12 +399,25 @@ export function Assistant({
       await text('Opened ' + (a.kind === 'open_stock' ? 'research' : a.kind) + ' for ' + s + '.')
       return
     }
+    if (a.kind === 'range') {
+      const s = stock(a.symbol)
+      navigate('Research', s, rangeFocus(a.span))
+      await text('Showing ' + s + ' · ' + a.span + '.')
+      return
+    }
     if (a.kind === 'chart') {
       const symbols = [...new Set((a.symbols || []).map((s) => stock(s)))].slice(0, 4)
       if (!symbols.length) throw Error('Choose a symbol for the chart.')
       const span = a.span || '1y'
-      const saved = await api<{ id: string }>('/assistant/charts', 'POST', { symbols, span })
-      await append({ text: 'Price history', links, graph: { symbols, span, snapshot: saved.id } })
+      const saved = await api<{ id: string }>('/assistant/charts', 'POST', {
+        symbols,
+        span,
+      })
+      await append({
+        text: 'Price history',
+        links,
+        graph: { symbols, span, snapshot: saved.id },
+      })
       return
     }
     if (a.kind === 'research') {
@@ -433,7 +523,10 @@ export function Assistant({
           )
       const marks = new Map<
         string,
-        { data: { price: number; time: number; currency: string } | null; stale: boolean }
+        {
+          data: { price: number; time: number; currency: string } | null
+          stale: boolean
+        }
       >()
       for (const s of new Set(rows.map((r) => r.symbol)))
         marks.set(s, await api('/desk/quote/' + enc(s)))
@@ -507,24 +600,6 @@ export function Assistant({
       })
       return
     }
-    if (
-      a.kind === 'appearance' ||
-      a.kind === 'accent' ||
-      a.kind === 'advanced' ||
-      a.kind === 'home_stock'
-    ) {
-      await save(
-        a.kind === 'appearance'
-          ? { appearance: a.mode as Preferences['appearance'] }
-          : a.kind === 'accent'
-            ? { accent: a.color }
-            : a.kind === 'advanced'
-              ? { advanced: a.enabled }
-              : { home_symbol: stock(a.symbol) },
-      )
-      await text('Saved your ' + a.kind.replace('_', ' ') + ' preference.')
-      return
-    }
     if (a.kind === 'model') {
       const v = await api<Connection>('/openai', 'PUT', {
         model: a.model,
@@ -539,6 +614,12 @@ export function Assistant({
         a.kind,
       )
     ) {
+      if (a.kind === 'create_list') {
+        await api('/watchlists', 'POST', { name: a.name })
+        updated()
+        await text('Created ' + a.name + '.')
+        return
+      }
       const lists = await api<SavedList[]>('/watchlists')
       if (a.kind === 'watchlists') {
         await text(
@@ -547,10 +628,7 @@ export function Assistant({
         )
         return
       }
-      if (a.kind === 'create_list') {
-        await api('/watchlists', 'POST', { name: a.name })
-        await text('Created ' + a.name + '.')
-      } else {
+      {
         const l = named(lists, a.name, true),
           path = '/watchlists/' + enc(l.id)
         if (a.kind === 'rename_list') {
@@ -579,6 +657,17 @@ export function Assistant({
         direction: string
         threshold: number
         triggered: string | null
+      }
+      if (a.kind === 'alert' && a.mode === 'create') {
+        const s = stock(a.symbol)
+        await api('/alerts', 'POST', {
+          symbol: s,
+          direction: a.direction,
+          threshold: a.threshold,
+        })
+        updated()
+        await text('Watching ' + s + ' ' + a.direction + ' ' + a.threshold + '.')
+        return
       }
       const all = await api<Alert[]>(
         a.kind === 'alerts' && a.mode === 'check' ? '/alerts/check' : '/alerts',
@@ -609,14 +698,20 @@ export function Assistant({
         if (matches.length !== 1) throw Error('Select the matching alert under Watchlists.')
         await api('/alerts/' + enc(matches[0].id), 'DELETE')
         await text('Removed the alert.')
-      } else {
-        await api('/alerts', 'POST', { symbol: s, direction: a.direction, threshold: a.threshold })
-        await text('Watching ' + s + ' ' + a.direction + ' ' + a.threshold + '.')
-      }
+      } else throw Error('Choose a supported alert action.')
       updated()
       return
     }
     if (['portfolio', 'add_account', 'delete_account', 'position'].includes(a.kind)) {
+      if (a.kind === 'add_account') {
+        await api('/holdings/accounts', 'POST', {
+          name: a.name,
+          institution: a.institution,
+        })
+        updated()
+        await text('Saved account ' + a.name + '.')
+        return
+      }
       const accounts = await api<Account[]>('/holdings')
       if (a.kind === 'portfolio') {
         const rows = accounts.flatMap((ac) =>
@@ -637,10 +732,7 @@ export function Assistant({
         })
         return
       }
-      if (a.kind === 'add_account') {
-        await api('/holdings/accounts', 'POST', { name: a.name, institution: a.institution })
-        await text('Saved account ' + a.name + '.')
-      } else {
+      {
         const ac = named(accounts, a.account || a.name),
           path = '/holdings/accounts/' + enc(ac.id)
         if (a.kind === 'delete_account') {
@@ -683,14 +775,7 @@ export function Assistant({
   }
   async function send(message = input) {
     const value = message.trim()
-    if (
-      !value ||
-      requestLock.current ||
-      history.loading ||
-      history.dirty ||
-      !connection?.configured
-    )
-      return
+    if (!value || requestLock.current || history.loading || history.dirty) return
     if (/\bsk-[\w-]{12,}/i.test(value)) {
       type('')
       fail('Enter API keys in Settings.')
@@ -700,27 +785,36 @@ export function Assistant({
     wait(true)
     fail('')
     try {
-      const conversation = await history.ensure(value)
-      const msgs: Context = [...conversation.context, { role: 'user' as const, text: value }].slice(
-        -15,
-      )
-      await append({ role: 'user', text: value }, msgs)
       type('')
-      const result = await api<{ reply: string; actions: Action[]; links?: ChatLink[] }>(
-        '/assistant',
-        'POST',
-        { page, symbol, messages: msgs, custom_tab_open: Boolean(currentTab) },
-      )
+      setPhase('Saving message…')
+      const msgs = await history.startTurn(value)
+      setPhase('Choosing an action…')
+      const result = await api<{
+        reply: string
+        actions: Action[]
+        links?: ChatLink[]
+        local?: boolean
+      }>('/assistant', 'POST', {
+        page,
+        symbol,
+        messages: msgs,
+        custom_tab_open: Boolean(currentTab),
+        portfolio_context: portfolioContext,
+      })
       const links = (result.links || [])
         .map((l) => ({ ...l, symbol: l.symbol || symbol }))
         .filter((l) => !!linkUrl(l, symbol))
         .slice(0, 2)
       // Follow-up turns include user text and planner intent. Account values and local receipts stay on-device.
       const plan = result.actions
-        .map((a) => [a.kind, a.symbol, a.symbols?.join(', '), a.span].filter(Boolean).join(' '))
+        .map((a) =>
+          [a.kind, ...(portfolioContext ? [] : [a.symbol, a.symbols?.join(', ')]), a.span]
+            .filter(Boolean)
+            .join(' '),
+        )
         .join(', ')
       const next: Context = [
-        ...msgs,
+        ...(result.local ? msgs.slice(0, -1) : msgs),
         {
           role: 'assistant' as const,
           text: [result.reply, plan].filter(Boolean).join(' ').slice(0, 2900) || 'Ready.',
@@ -728,21 +822,69 @@ export function Assistant({
       ].slice(-15)
       if (result.actions.length) {
         if (result.reply.includes('?')) await append({ text: result.reply, links }, next)
-        else await history.write({ context: next })
-        for (let i = 0; i < result.actions.length; i++)
-          await execute(result.actions[i], false, i === 0 ? links : [])
+        // If another window changed the chat while planning, stop before mutations or paid generation.
+        // Read-only actions may save context together with the first result.
+        else if (
+          result.actions.some(
+            (a) =>
+              ![
+                'navigate',
+                'range',
+                'open_stock',
+                'ratings',
+                'news',
+                'portfolio',
+                'watchlists',
+                'chart',
+              ].includes(a.kind),
+          )
+        )
+          await history.write({ context: next })
+        for (let i = 0; i < result.actions.length; i++) {
+          const action = result.actions[i]
+          const p = preference(action)
+          if (p) {
+            while (i + 1 < result.actions.length) {
+              const more = preference(result.actions[i + 1])
+              if (!more) break
+              Object.assign(p, more)
+              i++
+            }
+            setPhase('Applying settings…')
+            await savePreferences(p, next)
+          } else {
+            setPhase(
+              action.kind === 'research'
+                ? 'Reading sources…'
+                : action.kind === 'score'
+                  ? 'Generating scores…'
+                  : action.kind === 'chart'
+                    ? 'Loading prices…'
+                    : 'Applying your request…',
+            )
+            await execute(action, false, i === 0 ? links : [], next)
+          }
+        }
       } else await append({ text: result.reply || 'Choose a destination.', links }, next)
     } catch (e) {
       if (history.current.current && !history.pending.current) {
         try {
-          await append({ text: errorText(e), error: true })
+          await append({
+            text: errorText(e),
+            error: true,
+            links: !connection?.configured ? [settingsLink] : undefined,
+          })
         } catch (saveError) {
           fail(errorText(saveError))
         }
-      } else fail(errorText(e))
+      } else {
+        if (!history.current.current) type(value)
+        fail(errorText(e))
+      }
     } finally {
       requestLock.current = false
       wait(false)
+      setPhase('Working')
     }
   }
   async function decide(e: Entry, allow: boolean) {
@@ -769,6 +911,7 @@ export function Assistant({
     } finally {
       requestLock.current = false
       wait(false)
+      setPhase('Working')
     }
   }
   const navProps = { symbol, follow }
@@ -787,9 +930,7 @@ export function Assistant({
           }}
         >
           <header>
-            <span className="chat-icon">
-              <Sparkles size={17} aria-hidden />
-            </span>
+            <ChatResize />
             <div className="chat-heading">
               <strong>StockReplay assistant</strong>
               <small title={history.chat?.title}>
@@ -945,7 +1086,11 @@ export function Assistant({
                         <ChatAnchor {...navProps} link={portfolioGuide} />
                         <ChatAnchor
                           {...navProps}
-                          link={{ label: 'View watchlists', page: 'Watchlists', symbol }}
+                          link={{
+                            label: 'View watchlists',
+                            page: 'Watchlists',
+                            symbol,
+                          }}
                         />
                       </div>
                       {connection?.configured ? (
@@ -981,7 +1126,11 @@ export function Assistant({
                     decide={(row, allow) => void decide(row, allow)}
                   />
                 ))}
-                {busy && <Busy text="Working" />}
+                {busy && (
+                  <span role="status">
+                    <Busy text={phase} />
+                  </span>
+                )}
                 {historyError && (
                   <div className="chat-notice">
                     <ErrorBox text={historyError} />
@@ -1021,18 +1170,18 @@ export function Assistant({
                   aria-label="Message the assistant"
                   maxLength={3000}
                   value={input}
-                  disabled={!connection?.configured || history.dirty}
+                  disabled={history.dirty && !busy}
                   placeholder="Ask StockReplay…"
                   onChange={(e) => type(e.target.value)}
                 />
                 <button
                   aria-label="Send message"
-                  disabled={locked || history.dirty || !connection?.configured || !input.trim()}
+                  disabled={locked || history.dirty || !input.trim()}
                 >
                   <ArrowUp size={17} />
                 </button>
               </form>
-              <small className="chat-privacy">Saved on this Mac · Messages sent to OpenAI</small>
+              <small className="chat-privacy">Saved on this Mac · AI requests use OpenAI</small>
             </>
           )}
         </section>

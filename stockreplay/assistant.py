@@ -4,6 +4,7 @@ import re
 from typing import Literal
 from fastapi import HTTPException
 from pydantic import Field
+from .assistant_shortcuts import local_actions
 from .schema import Model
 from .openai_research import choices, object_schema, array, indexed_evidence
 from .store import now
@@ -11,22 +12,29 @@ from .store import now
 PAGES = ("Research", "Watchlists", "Portfolio", "Settings")
 MODES = ("system", "light", "dark")
 ACCENTS = ("forest", "ocean", "violet", "amber")
-SPANS = ("1mo", "6mo", "1y", "2y", "5y", "10y")
 STRING = {"type": "string"}
 NUMBER = {"type": "number"}
 OPTIONAL_NUMBER = {"type": ["number", "null"]}
 FIELDS = {
     "navigate": {"page": choices(*PAGES)},
     "tab": {
-        "operation": choices("create", "open", "rename", "delete", "append"),
+        "operation": choices("create", "open", "rename", "delete", "append", "edit_block"),
         "name": STRING,
         "value": STRING,
         "blocks": array(
             object_schema(
                 {
-                    "view": choices("chart", "news", "ratings", "watchlist", "portfolio", "note"),
+                    "view": choices(
+                        "chart",
+                        "news",
+                        "ratings",
+                        "watchlist",
+                        "portfolio",
+                        "note",
+                        "scores",
+                    ),
                     "value": STRING,
-                    "span": choices(*SPANS),
+                    "span": STRING,
                 }
             )
         ),
@@ -34,7 +42,7 @@ FIELDS = {
     "open_stock": {"symbol": STRING},
     "research": {"symbol": STRING, "question": STRING},
     "score": {"symbol": STRING},
-    "chart": {"symbols": array(STRING), "span": choices(*SPANS)},
+    "chart": {"symbols": array(STRING), "span": STRING},
     "chart_tools": {
         "symbol": STRING,
         "tool": choices("inspect", "horizontal", "trend", "box"),
@@ -92,6 +100,9 @@ FIELDS = {
     "appearance": {"mode": choices(*MODES)},
     "accent": {"color": choices(*ACCENTS)},
     "advanced": {"enabled": {"type": "boolean"}},
+    "range": {"symbol": STRING, "span": STRING},
+    "home_portfolio": {},
+    "chat_size": {"size": choices("compact", "large")},
     "home_stock": {"symbol": STRING},
     "model": {"model": STRING},
     "ratings": {"symbol": STRING},
@@ -125,7 +136,8 @@ Write one plain sentence, at most 18 words. Skip introductions, repeated action 
 For actions, leave reply empty when the app's result will answer the request. For a question about finding or
 using a feature, return up to two relevant destination names as links. Open it immediately only if asked.
 When custom_tab_open is true, “this tab” means the open custom tab: for append, open, rename or delete, use an empty name. When false, ask which tab if the user omits it.
-For bookmarks, link Saved articles under My tabs. To save a story, point to the bookmark button on its news card.
+Use range for the Research page's performance chart. For chart, range and tab chart blocks supply a span of 1d, 5d, 1mo, 3mo, 6mo, ytd, 1y, 2y, 5y, 10y, max or YYYY-MM-DD/YYYY-MM-DD for custom dates. Use chart for a graph inside chat; range changes the homepage graph. A saved scores block takes one ticker and shows its latest saved assessment. To edit a tab widget use edit_block, its one-based position as value and exactly one replacement block. For home based on holdings use home_portfolio (uses the user's locally selected portfolio holding); to pin a ticker use home_stock. Use individual appearance, accent and advanced actions for a combined settings request. Use chat_size to expand or reset the assistant window. Only change the API model if explicitly requested, using model. Direct key or Keychain changes to Settings.
+When the active symbol is blank, use an empty symbol for requests concerning this stock; the app resolves it locally. For bookmarks, link Saved articles under My tabs. To save a story, point to the bookmark button on its news card.
 For help importing personal investments, link Portfolio import guide. Put destinations in links, never invent URLs.
 """
 
@@ -152,6 +164,7 @@ class Chat(Model):
     page: Literal["Research", "Watchlists", "Portfolio", "Settings"]
     symbol: str = Field(min_length=1, max_length=20)
     custom_tab_open: bool = False
+    portfolio_context: bool = False
 
 
 class Question(Model):
@@ -163,25 +176,53 @@ def reject_key(text):
         raise ValueError("Enter API keys in Settings. Remove the key from your message.")
 
 
+def planner_schema():
+    # Most actions take just a symbol. Reuse that object in the strict schema.
+    shared = {"symbol": "stock", "name": "named"}
+    variants = []
+    for name, fields in FIELDS.items():
+        simple = next(iter(fields), None)
+        if simple in shared and fields == {simple: STRING}:
+            arguments = {"$ref": "#/$defs/" + shared[simple]}
+        else:
+            arguments = object_schema(fields) if fields else choices("show")
+        variants.append(object_schema({name: arguments}))
+    return {
+        **object_schema(
+            {
+                "reply": STRING,
+                "actions": array({"anyOf": variants}),
+                "links": array(choices(*DESTINATIONS)),
+            }
+        ),
+        "$defs": {key: object_schema({field: STRING}) for field, key in shared.items()},
+    }
+
+
+PLANNER_SCHEMA = planner_schema()
+
+
 def plan(gateway, chat):
-    key, model = gateway.credentials()
     if chat.messages[-1].role != "user":
         raise ValueError("Enter a message to send.")
     for m in chat.messages:
         reject_key(m.text)
-    variants = [
-        object_schema({action: object_schema(fields) if fields else choices("show")})
-        for action, fields in FIELDS.items()
-    ]
-    schema = object_schema(
-        {
-            "reply": STRING,
-            "actions": array({"anyOf": variants}),
-            "links": array(choices(*DESTINATIONS)),
-        }
-    )
+    actions = local_actions(chat.messages[-1].text, chat.symbol)
+    if actions:
+        return {"reply": "", "actions": actions, "links": [], "local": True}
+    key, model = gateway.credentials()
+    inputs = chat.model_dump(exclude={"portfolio_context"})
+    if chat.portfolio_context:
+        # An automatically selected holding is private. Empty symbols resolve on the Mac.
+        inputs["symbol"] = ""
     result = gateway.structured(
-        key, model, "app_assistant", schema, GUIDE + CHAT_STYLE, chat.model_dump(), 2200
+        key,
+        model,
+        "app_assistant",
+        PLANNER_SCHEMA,
+        GUIDE + CHAT_STYLE,
+        inputs,
+        2200,
     )
     reply = result.get("reply")
     actions = result.get("actions")
@@ -224,9 +265,9 @@ def plan(gateway, chat):
     return {"reply": brief_text(reply, 18, 120), "actions": commands, "links": links}
 
 
-def research_question(gateway, brief, question):
+def research_question(gateway, brief, question, credentials=None):
     reject_key(question)
-    key, model = gateway.credentials()
+    key, model = credentials or gateway.credentials()
     items = indexed_evidence(brief["evidence"])
     if not items:
         raise ValueError("No dated public sources are available for this stock.")

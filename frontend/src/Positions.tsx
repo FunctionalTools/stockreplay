@@ -1,6 +1,6 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Building2, BookOpen, FileUp, Plus, Pencil, Trash2 } from 'lucide-react'
-import { PortfolioImportGuide } from './PortfolioImportGuide'
+import { guideInstitution, PortfolioImportGuide, type ImportMode } from './PortfolioImportGuide'
 import { api, errorText } from './types'
 import { Modal, Field, Empty, ErrorBox, Busy } from './ui'
 import { PageHead, useResource, fmt, when, type Packet } from './deskCommon'
@@ -64,13 +64,17 @@ function StatementImport({
   close,
   done,
   initialInstitution,
+  initialMode,
 }: {
   close: () => void
   done: () => void
   initialInstitution: string
+  initialMode: ImportMode
 }) {
   const [content, setContent] = useState(''),
-    [institution, setInstitution] = useState(initialInstitution),
+    [institution, setInstitution] = useState(() => guideInstitution(initialInstitution)),
+    [mode, setMode] = useState<ImportMode>(initialMode),
+    [balance, setBalance] = useState(''),
     [account, setAccount] = useState(''),
     [date, setDate] = useState(''),
     [currency, setCurrency] = useState('USD'),
@@ -79,6 +83,10 @@ function StatementImport({
     [busy, wait] = useState(false),
     [error, setErr] = useState(''),
     [filename, setFile] = useState('')
+  const instructions = useRef<HTMLDetailsElement>(null)
+  const selectedFile = useRef<File | undefined>(undefined)
+  const isBalance = mode === 'balance'
+  const validBalance = balance.trim() !== '' && Number.isFinite(Number(balance))
   const change = (fn: () => void) => {
     setPreview(null)
     setErr('')
@@ -96,8 +104,10 @@ function StatementImport({
           account,
           as_of: date || null,
           currency,
-          mapping: map,
-          content,
+          mapping: isBalance ? {} : map,
+          content: isBalance
+            ? 'Description,Market Value\nStatement balance,' + Number(balance)
+            : content,
           revisions: apply
             ? Object.fromEntries((preview || []).map((a) => [a.id, a.revision]))
             : {},
@@ -115,11 +125,23 @@ function StatementImport({
   return (
     <Modal title="Import a holdings statement" wide close={close}>
       <div className="modal-body stack">
-        <details className="import-instructions">
+        <details className="import-instructions" ref={instructions}>
           <summary>
             <BookOpen size={15} aria-hidden="true" /> How to import your portfolio
           </summary>
-          <PortfolioImportGuide />
+          <PortfolioImportGuide
+            initialInstitution={initialInstitution}
+            onImport={
+              busy
+                ? undefined
+                : (name, nextMode) =>
+                    change(() => {
+                      setInstitution(guideInstitution(name))
+                      setMode(nextMode)
+                      if (instructions.current) instructions.current.open = false
+                    })
+            }
+          />
         </details>
         <form
           className="desk-form"
@@ -128,83 +150,122 @@ function StatementImport({
             void submit(false)
           }}
         >
-          <div className="form-grid">
-            <Field name="Institution">
-              <input
-                value={institution}
-                required
-                onChange={(e) => change(() => setInstitution(e.target.value))}
-              />
+          <fieldset disabled={busy} className="statement-inputs">
+            <Field name="Import method">
+              <select
+                value={mode}
+                onChange={(e) => change(() => setMode(e.target.value as ImportMode))}
+              >
+                <option value="file">Import a local file</option>
+                <option value="balance">Enter statement balance</option>
+              </select>
             </Field>
-            <Field name="Account nickname">
-              <input
-                value={account}
-                placeholder="Required for files without an account"
-                onChange={(e) => change(() => setAccount(e.target.value))}
-              />
-            </Field>
-            <Field name="Fallback currency">
-              <input
-                required
-                pattern="[A-Z]{3}"
-                maxLength={3}
-                value={currency}
-                onChange={(e) => change(() => setCurrency(e.target.value.toUpperCase()))}
-              />
-            </Field>
-            <Field name="Statement as of">
-              <input
-                type="date"
-                value={date}
-                onChange={(e) => change(() => setDate(e.target.value))}
-              />
-            </Field>
-          </div>
-          <Field name="Positions statement">
-            <input
-              type="file"
-              accept=".csv,.ofx,.qfx,text/csv"
-              required
-              disabled={busy}
-              onChange={async (e) => {
-                const f = e.target.files?.[0]
-                change(() => {
-                  setContent('')
-                  setFile(f?.name || '')
-                })
-                if (f) {
-                  if (f.size > 8_000_000) {
-                    setErr('Choose a statement smaller than 8 MB.')
-                    return
-                  }
-                  try {
-                    setContent(await f.text())
-                  } catch {
-                    setErr('This file could not be read.')
-                  }
-                }
-              }}
-            />
-          </Field>
-          <details>
-            <summary>Map another broker’s CSV columns</summary>
-            <p>
-              Enter the exact header for any column StockReplay should use. Recognized headers are
-              mapped automatically.
-            </p>
             <div className="form-grid">
-              {Object.entries(mapping).map(([k, v]) => (
-                <Field key={k} name={v + ' column'}>
+              <Field name="Institution">
+                <input
+                  value={institution}
+                  required
+                  onChange={(e) => change(() => setInstitution(e.target.value))}
+                />
+              </Field>
+              <Field name="Account nickname">
+                <input
+                  value={account}
+                  required={isBalance}
+                  placeholder={
+                    isBalance ? 'e.g. Everyday checking' : 'Required for files without an account'
+                  }
+                  onChange={(e) => change(() => setAccount(e.target.value))}
+                />
+              </Field>
+              <Field name={isBalance ? 'Balance currency' : 'Fallback currency'}>
+                <input
+                  required
+                  pattern="[A-Z]{3}"
+                  maxLength={3}
+                  value={currency}
+                  onChange={(e) => change(() => setCurrency(e.target.value.toUpperCase()))}
+                />
+              </Field>
+              <Field name="Statement as of">
+                <input
+                  type="date"
+                  required={isBalance}
+                  value={date}
+                  onChange={(e) => change(() => setDate(e.target.value))}
+                />
+              </Field>
+            </div>
+            <fieldset disabled={isBalance} hidden={isBalance} className="statement-inputs">
+              <Field name="Positions statement">
+                <input
+                  type="file"
+                  accept=".csv,.ofx,.qfx,text/csv"
+                  required
+                  disabled={busy}
+                  onChange={async (e) => {
+                    const f = e.target.files?.[0]
+                    selectedFile.current = f
+                    change(() => {
+                      setContent('')
+                      setFile(f?.name || '')
+                    })
+                    if (f) {
+                      if (f.size > 8_000_000) {
+                        setErr('Choose a statement smaller than 8 MB.')
+                        return
+                      }
+                      try {
+                        const data = await f.text()
+                        if (selectedFile.current === f) setContent(data)
+                      } catch {
+                        if (selectedFile.current === f) setErr('This file could not be read.')
+                      }
+                    }
+                  }}
+                />
+              </Field>
+              <details>
+                <summary>Map another broker’s CSV columns</summary>
+                <p>
+                  Enter the exact header for any column StockReplay should use. Recognized headers
+                  are mapped automatically.
+                </p>
+                <div className="form-grid">
+                  {Object.entries(mapping).map(([k, v]) => (
+                    <Field key={k} name={v + ' column'}>
+                      <input
+                        placeholder="Automatic"
+                        value={map[k] || ''}
+                        onChange={(e) => change(() => setMap({ ...map, [k]: e.target.value }))}
+                      />
+                    </Field>
+                  ))}
+                </div>
+              </details>
+            </fieldset>
+            {isBalance && (
+              <>
+                <Field name="Closing balance">
                   <input
-                    placeholder="Automatic"
-                    value={map[k] || ''}
-                    onChange={(e) => change(() => setMap({ ...map, [k]: e.target.value }))}
+                    type="number"
+                    step="any"
+                    required
+                    value={balance}
+                    onChange={(e) => change(() => setBalance(e.target.value))}
                   />
                 </Field>
-              ))}
-            </div>
-          </details>
-          <button className="btn" disabled={busy || !content}>
+                <small>
+                  Use the ending balance and date printed on your statement. The PDF stays on your
+                  Mac.
+                </small>
+              </>
+            )}
+          </fieldset>
+          <button
+            className="btn"
+            disabled={busy || (isBalance ? !validBalance || !account.trim() : !content)}
+          >
             <FileUp size={14} />
             {busy ? 'Reading statement' : 'Preview statement'}
           </button>
@@ -212,7 +273,7 @@ function StatementImport({
         <ErrorBox text={error} />
         {preview && (
           <section className="import-preview">
-            <h3>Review {filename}</h3>
+            <h3>Review {isBalance ? 'statement balance' : filename}</h3>
             {preview.map((a) => (
               <div key={a.id}>
                 <h4>
@@ -341,6 +402,7 @@ export function HoldingsPage({ initialAction = '' }: { initialAction?: string })
     [importing, setImport] = useState(false),
     [guideOpen, setGuideOpen] = useState(initialAction === 'import-guide'),
     [initialInstitution, setInitialInstitution] = useState('Fidelity'),
+    [initialMode, setInitialMode] = useState<ImportMode>('file'),
     [adding, setAdding] = useState(false),
     [edit, setEdit] = useState<{ a: Account; p: Position } | null>(null),
     [error, setErr] = useState(''),
@@ -352,7 +414,8 @@ export function HoldingsPage({ initialAction = '' }: { initialAction?: string })
     if (initialAction === 'import-guide') setGuideOpen(true)
     if (initialAction === 'account') setAdding(true)
   }, [initialAction])
-  function openStatement(institution = 'Fidelity') {
+  function openStatement(institution = 'Fidelity', mode: ImportMode = 'file') {
+    setInitialMode(mode)
     setGuideOpen(false)
     setInitialInstitution(institution)
     setImport(true)
@@ -367,6 +430,7 @@ export function HoldingsPage({ initialAction = '' }: { initialAction?: string })
     show('Holdings updated on this Mac.')
     setMarks({})
     data.reload()
+    window.dispatchEvent(new Event('stockreplay:holdings-changed'))
   }
   async function create(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
@@ -563,6 +627,7 @@ export function HoldingsPage({ initialAction = '' }: { initialAction?: string })
       {importing && (
         <StatementImport
           initialInstitution={initialInstitution}
+          initialMode={initialMode}
           close={() => setImport(false)}
           done={saved}
         />

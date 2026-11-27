@@ -1,17 +1,24 @@
 import { api } from './types'
 
-export const tabViews = ['chart', 'news', 'ratings', 'watchlist', 'portfolio', 'note'] as const
-export const tabSpans = ['1mo', '6mo', '1y', '2y', '5y', '10y'] as const
+export const tabViews = [
+  'chart',
+  'news',
+  'ratings',
+  'scores',
+  'watchlist',
+  'portfolio',
+  'note',
+] as const
 export type TabBlock = {
   view: (typeof tabViews)[number]
   value: string
-  span: (typeof tabSpans)[number]
+  span: string
 }
 export type TabSummary = { id: string; title: string; revision: number; updated: string }
 export type CustomTab = TabSummary & { blocks: TabBlock[] }
 export type TabAction = {
   kind: 'tab'
-  operation: 'create' | 'open' | 'rename' | 'delete' | 'append'
+  operation: 'create' | 'open' | 'rename' | 'delete' | 'append' | 'edit_block'
   name: string
   value: string
   blocks: TabBlock[]
@@ -60,19 +67,33 @@ export async function executeTabAction(
     const found = await resolveTab(a, currentTab)
     const path = '/tabs/' + found.id
     saved = await api<CustomTab>(path)
-    if (a.operation === 'rename' || a.operation === 'append') {
-      if (a.operation === 'append' && !a.blocks.length) throw Error('Choose a block to add.')
+    if (a.operation === 'rename' || a.operation === 'append' || a.operation === 'edit_block') {
+      let blocks = saved.blocks
+      if (a.operation === 'append') {
+        if (!a.blocks.length) throw Error('Choose a block to add.')
+        blocks = [...blocks, ...a.blocks]
+      }
+      if (a.operation === 'edit_block') {
+        const index = Number(a.value) - 1
+        if (!/^([1-9]\d*)$/.test(a.value) || index >= blocks.length || a.blocks.length !== 1)
+          throw Error('Specify one existing block number and its replacement.')
+        blocks = blocks.map((block, i) => (i === index ? a.blocks[0] : block))
+      }
       saved = await api<CustomTab>(path, 'PUT', {
         title: a.operation === 'rename' ? a.value : saved.title,
-        blocks: a.operation === 'append' ? [...saved.blocks, ...a.blocks] : saved.blocks,
+        blocks,
         revision: saved.revision,
       })
     } else if (a.operation !== 'open') throw Error('Choose a supported tab action.')
   }
   if (a.operation !== 'open') changed()
   openTab(saved.id)
-  const verb = { create: 'Created', open: 'Opened', append: 'Updated', rename: 'Renamed' }[
-    a.operation
-  ]
+  const verb = {
+    create: 'Created',
+    open: 'Opened',
+    append: 'Updated',
+    edit_block: 'Updated',
+    rename: 'Renamed',
+  }[a.operation]
   return { text: verb + ' ' + saved.title + '.', tab: { id: saved.id, title: saved.title } }
 }

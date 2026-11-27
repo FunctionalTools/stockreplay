@@ -521,7 +521,12 @@ def test_live_openai_generation(client):
         json={
             "page": "Research",
             "symbol": "NVDA",
-            "messages": [{"role": "user", "text": "Plot MSFT over one year."}],
+            "messages": [
+                {
+                    "role": "user",
+                    "text": "Draw a comparison of Microsoft and its chipmaking partner NVIDIA over the past year in this chat.",
+                }
+            ],
         },
     )
     assert chat.is_success and any(a["kind"] == "chart" for a in chat.json()["actions"]), chat.text

@@ -263,11 +263,27 @@ export function Settings({
                 onChange={(e) => void update({ advanced: e.target.checked })}
               />
             </label>
+            <Field name="Open Research with">
+              <select
+                value={prefs.home_mode}
+                onChange={(e) =>
+                  void update({ home_mode: e.target.value as Preferences['home_mode'] })
+                }
+              >
+                <option value="portfolio">Follow my holdings</option>
+                <option value="ticker">My saved ticker</option>
+              </select>
+            </Field>
+            <small>
+              Follow my holdings opens a ticker from your local portfolio, or the SPY market
+              benchmark when no holding has a researchable ticker.
+            </small>
             <form
               className="desk-toolbar"
               onSubmit={(e) => {
                 e.preventDefault()
-                if (tickerPattern.test(home)) void update({ home_symbol: home })
+                if (tickerPattern.test(home))
+                  void update({ home_mode: 'ticker', home_symbol: home })
               }}
             >
               <Field name="Starting stock">
@@ -280,7 +296,10 @@ export function Settings({
               </Field>
               <button
                 className="btn"
-                disabled={!tickerPattern.test(home) || prefs.home_symbol === home}
+                disabled={
+                  !tickerPattern.test(home) ||
+                  (prefs.home_symbol === home && prefs.home_mode === 'ticker')
+                }
               >
                 Save ticker
               </button>

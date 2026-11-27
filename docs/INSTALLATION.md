@@ -19,3 +19,7 @@ For a billing error, check the API project’s available balance or limit. For a
 StockReplay stores data under `.stockreplay/` in this checkout. To back it up, stop the app and copy the directory. Set `STOCKREPLAY_HOME` to use another location. The login Keychain entry is associated with the database path. Market source caches may be restored with the rest of the database.
 
 For browser tests, install the test browser with `STOCKREPLAY_INSTALL_BROWSERS=1 ./setup.sh`, then run `npm --prefix frontend run e2e`. Normal installation only needs your existing browser. [Workflow and test record](../BUILD_LOG.md)
+
+## Starting ticker after an update
+
+Earlier releases saved NVDA even when you had only changed the appearance. On upgrade, that old value starts in **Follow my holdings** mode. If NVDA was your own choice, select it once in the Research ticker picker to pin it again. Other previously saved tickers stay pinned.

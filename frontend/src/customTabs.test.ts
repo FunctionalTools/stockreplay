@@ -28,3 +28,31 @@ it('keeps a deletion bound to the tab and revision originally confirmed', async 
   expect(open).not.toHaveBeenCalled()
   expect(changed).toHaveBeenCalledTimes(1)
 })
+
+it('updates only the specified saved block and leaves neighboring blocks in order', async () => {
+  const id = 'c'.repeat(32)
+  const blocks = [
+    { view: 'note', value: 'Original note', span: '1y' },
+    { view: 'chart', value: 'AAPL', span: '1y' },
+  ]
+  const updated = { view: 'chart', value: 'AAPL', span: '2025-08-04/2025-08-12' } as const
+  const tab = { id, title: 'Apple', revision: 13, updated: '', blocks }
+  const fetch = vi
+    .fn()
+    .mockResolvedValueOnce(Response.json([tab]))
+    .mockResolvedValueOnce(Response.json(tab))
+    .mockResolvedValueOnce(Response.json({ ...tab, revision: 14, blocks: [blocks[0], updated] }))
+  vi.stubGlobal('location', { hash: tabHref(id) })
+  vi.stubGlobal('fetch', fetch)
+  await executeTabAction(
+    { kind: 'tab', operation: 'edit_block', name: '', value: '2', blocks: [updated] },
+    vi.fn(),
+    vi.fn(),
+    id,
+  )
+  expect(JSON.parse(fetch.mock.calls[2][1].body)).toEqual({
+    title: 'Apple',
+    revision: 13,
+    blocks: [blocks[0], updated],
+  })
+})

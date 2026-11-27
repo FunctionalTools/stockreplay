@@ -277,3 +277,27 @@
 .tabs-history:hover {
   background: var(--soft);
 }
+
+.tab-range-dates {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 9rem), 1fr));
+  gap: 0.5rem;
+}
+.tab-range-dates input {
+  min-width: 0;
+}
+.tab-chart-returns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem 1rem;
+  font-size: 0.85rem;
+}
+.tab-widget-scores .gauges {
+  max-width: 22rem;
+  margin: 0.65rem auto;
+}
+.tab-widget-scores > small {
+  display: block;
+  color: var(--muted);
+  margin-bottom: 0.5rem;
+}

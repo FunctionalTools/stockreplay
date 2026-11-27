@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 import json
 import httpx
 import pandas as pd
-from stockreplay.trading_calendar import latest_session
+from stockreplay.trading_calendar import calendar, latest_session
 
 
 def completed(value):
@@ -13,7 +13,10 @@ def completed(value):
         json={
             "status": "completed",
             "output": [
-                {"type": "message", "content": [{"type": "output_text", "text": json.dumps(value)}]}
+                {
+                    "type": "message",
+                    "content": [{"type": "output_text", "text": json.dumps(value)}],
+                }
             ],
         },
     )
@@ -30,6 +33,20 @@ def assessment(inputs):
         "buy_score": 72,
         "risk_score": 58,
         "confidence": "Moderate",
+        "factors": {
+            row["factor"]: {
+                "buy": {
+                    "direction": "Raises",
+                    "reason": "This observation supports the investment case.",
+                },
+                "risk": {
+                    "direction": "Mixed",
+                    "reason": "The downside remains uncertain.",
+                },
+                "sources": [row["id"]],
+            }
+            for row in data
+        },
         "summary": point("price", "The sourced price change was about 5%."),
         "positives": [
             point("company_news", "The dated company report supports the investment case.")
@@ -61,7 +78,32 @@ def respond(request):
         )
     assert name == "app_assistant"
     msg = inputs["messages"][-1]["text"].lower()
-    if "chip stocks tab" in msg:
+    if "monthly review tab" in msg:
+        actions = [
+            {
+                "tab": {
+                    "operation": "create",
+                    "name": "Monthly review",
+                    "value": "",
+                    "blocks": [
+                        {"view": "scores", "value": "AAPL", "span": "1y"},
+                        {"view": "chart", "value": "AAPL", "span": "1mo"},
+                    ],
+                }
+            }
+        ]
+    elif "change block 2" in msg:
+        actions = [
+            {
+                "tab": {
+                    "operation": "edit_block",
+                    "name": "",
+                    "value": "2",
+                    "blocks": [{"view": "chart", "value": "AAPL", "span": "5d"}],
+                }
+            }
+        ]
+    elif "chip stocks tab" in msg:
         actions = [
             {
                 "tab": {
@@ -104,16 +146,36 @@ def respond(request):
 def install_market():
     from stockreplay import desk
 
-    end = latest_session()
+    completed_day = latest_session()
 
-    def chart(symbol, interval, span):
-        dates = pd.bdate_range(end=end, periods=270)
+    def chart(symbol, interval, span, start=None, end=None):
+        cal = calendar()
+        days = cal.sessions_window(completed_day, -269)
+        if span == "custom":
+            dates = (
+                cal.sessions_in_range(start, min(end, completed_day))
+                if start <= completed_day
+                else []
+            )
+        elif interval == "5m":
+            dates = [
+                bar
+                for session in days[-5:]
+                for bar in pd.date_range(
+                    cal.session_open(session),
+                    cal.session_close(session),
+                    freq="5min",
+                    inclusive="left",
+                )
+            ]
+        else:
+            dates = days
         rows = []
         for i, d in enumerate(dates):
             p = 35 + i * 0.14 + (i % 8) * 0.39 + (len(symbol) % 3)
             rows.append(
                 {
-                    "time": int(d.tz_localize("UTC").timestamp()),
+                    "time": int((d if d.tz else d.tz_localize("UTC")).timestamp()),
                     "date": str(d.date()),
                     "open": p,
                     "close": p + 0.5,
@@ -125,17 +187,23 @@ def install_market():
                     "dividend": 0,
                 }
             )
+        if not rows:
+            raise ValueError("No observations in the selected period.")
         return {
             "symbol": symbol,
             "bars": rows,
-            "as_of": str(end),
+            "as_of": rows[-1]["date"],
             "source": "Yahoo Finance",
             "url": "https://finance.yahoo.com/quote/" + symbol + "/history/",
             "currency": "USD",
             "timezone": "America/New_York",
-            "latest_completed_session": str(end),
+            "adjusted": True,
+            "exchange": "NMS",
+            "instrument_type": "EQUITY",
+            "latest_completed_session": str(completed_day),
         }
 
+    end = completed_day
     desk.chart_data = chart
     desk.company = lambda s: {
         "longName": s + " Test Company",
@@ -148,6 +216,12 @@ def install_market():
         "targetMeanPrice": 90,
         "targetHighPrice": 102,
         "forwardEps": 4.5,
+        "forwardPE": 17.5,
+        "trailingPE": 20.0,
+        "earningsGrowth": 0.18,
+        "revenueGrowth": 0.12,
+        "profitMargins": 0.14,
+        "debtToEquity": 36.5,
         "recommendationKey": "buy",
     }
     desk.forecast = lambda s: {
@@ -162,7 +236,14 @@ def install_market():
         "url": "https://stockanalysis.com/stocks/" + s.lower() + "/forecast/",
     }
     desk.consensus = lambda s: [
-        {"period": "0m", "strongBuy": 3, "buy": 2, "hold": 2, "sell": 0, "strongSell": 0}
+        {
+            "period": "0m",
+            "strongBuy": 3,
+            "buy": 2,
+            "hold": 2,
+            "sell": 0,
+            "strongSell": 0,
+        }
     ]
 
     def news(s, category):
@@ -173,7 +254,7 @@ def install_market():
                 "published": datetime.now(timezone.utc).isoformat(),
                 "category": category,
                 "publisher": "Test publication",
-                "excerpt": "A dated excerpt for the isolated browser test.",
+                "excerpt": f"A dated excerpt mentioning {s} for the isolated browser test.",
             }
         ]
 

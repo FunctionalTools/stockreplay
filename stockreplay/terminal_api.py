@@ -18,10 +18,12 @@ from .chat_history import register_chat_history
 from .market import read_csv
 from .desk import Desk, INTERVALS, SCREENS, parallel, safe_url, screen
 from .holdings import AccountInput, Holdings, Position, Statement
+from .home import portfolio_context
 from .openai_research import KeySettings, ModelLookup, OpenAIResearch
 from .custom_tabs import register_tabs
 from .schema import Model
 from .store import now
+from .price_ranges import price_range, validate_range
 
 
 def ticker(raw):
@@ -35,6 +37,7 @@ class Preferences(Model):
     appearance: Literal["system", "light", "dark"] | None = None
     accent: Literal["forest", "ocean", "violet", "amber"] | None = None
     advanced: bool | None = None
+    home_mode: Literal["portfolio", "ticker"] | None = None
     home_symbol: str | None = None
 
     @field_validator("home_symbol")
@@ -49,7 +52,7 @@ class ListImport(Model):
 
 class ChartCapture(Model):
     symbols: list[str] = Field(min_length=1, max_length=4)
-    span: Literal["1mo", "6mo", "1y", "2y", "5y", "10y"]
+    span: str = Field(min_length=2, max_length=21)
 
 
 class ListName(Model):
@@ -230,6 +233,7 @@ def register(app, db):
             yield
         finally:
             stopping.set()
+            t.openai.close()
 
     r = APIRouter(prefix="/api", lifespan=lifespan)
 
@@ -239,21 +243,45 @@ def register(app, db):
         "appearance": "system",
         "accent": "forest",
         "advanced": False,
-        "home_symbol": "NVDA",
+        "home_mode": "portfolio",
+        "home_symbol": "SPY",
     }
+
+    def read_prefs(payload):
+        saved = json.loads(payload) if payload else {}
+        if "home_mode" not in saved:
+            # Previous releases wrote NVDA even when only appearance was changed.
+            if saved.get("home_symbol") in (None, "NVDA"):
+                saved.pop("home_symbol", None)
+            else:
+                saved["home_mode"] = "ticker"
+        return {**defaults, **saved}
 
     @r.get("/preferences")
     def prefs():
         rows = t.query("select payload from preferences where id=1")
-        return {**defaults, **(json.loads(rows[0]["payload"]) if rows else {})}
+        return read_prefs(rows[0]["payload"] if rows else None)
+
+    @r.get("/home")
+    def home():
+        context = portfolio_context(t.holdings.all())
+        settings = prefs()
+        symbol = (
+            settings["home_symbol"]
+            if settings["home_mode"] == "ticker"
+            else context["portfolio_symbol"] or "SPY"
+        )
+        return {**context, "symbol": symbol}
 
     @r.patch("/preferences")
     def save_prefs(item: Preferences):
         updates = item.model_dump(exclude_none=True)
+        if "home_symbol" in updates:
+            updates.setdefault("home_mode", "ticker")
         with db.connect() as c:
             c.execute("begin immediate")
             row = c.execute("select payload from preferences where id=1").fetchone()
-            result = {**defaults, **(json.loads(row[0]) if row else {}), **updates}
+            result = {**read_prefs(row[0] if row else None), **updates}
             c.execute("insert or replace into preferences values(1,?)", (json.dumps(result),))
         return result
 
@@ -272,9 +300,9 @@ def register(app, db):
 
     @r.post("/assistant/research/{symbol}")
     def answer_question(symbol: str, item: assistant.Question):
-        t.openai.credentials()
         assistant.reject_key(item.question)
-        return assistant.research_question(t.openai, t.desk.briefing(ticker(symbol)), item.question)
+        credentials = t.openai.credentials()
+        return assistant.research_question(t.openai, t.desk.briefing(ticker(symbol)), item.question, credentials)
 
     @r.get("/prices/imports")
     def imports():
@@ -306,7 +334,12 @@ def register(app, db):
     @r.post("/assistant/charts")
     def capture_chart(item: ChartCapture):
         symbols = list(dict.fromkeys(ticker(s) for s in item.symbols))
-        packets = parallel({s: lambda s=s: t.desk.chart(s, "1d", item.span) for s in symbols})
+        parts = item.span.split("/")
+        preset = "custom" if len(parts) == 2 else item.span
+        start, end = validate_range(preset, *(parts if len(parts) == 2 else []))
+        packets = parallel({
+            s: lambda s=s: price_range(t.desk, s, preset, start, end) for s in symbols
+        })
         series, errors = [], []
         for symbol, packet in packets.items():
             data = packet["data"]
@@ -316,6 +349,7 @@ def register(app, db):
             series.append(
                 {
                     **{name: data[name] for name in ("symbol", "as_of", "currency", "url")},
+                    **{name: data[name] for name in ("interval", "timezone", "performance", "price_basis") if name in data},
                     "source": data["source"] + (" (cached)" if packet["stale"] else ""),
                     "bars": [
                         {key: bar[key] for key in ("date", "time", "raw_close", "close")}
@@ -352,6 +386,16 @@ def register(app, db):
     @r.get("/desk/chart/{symbol}")
     def chart(symbol: str, interval: str = "1d", span: str = "2y", refresh: bool = False):
         return t.desk.chart(ticker(symbol), interval, span, refresh)
+
+    @r.get("/desk/range/{symbol}")
+    def selected_range(
+        symbol: str,
+        range: str = "6mo",
+        start: Date | None = None,
+        end: Date | None = None,
+        refresh: bool = False,
+    ):
+        return price_range(t.desk, ticker(symbol), range, start, end, refresh)
 
     @r.get("/desk/quote/{symbol}")
     def quote(symbol: str, refresh: bool = False):

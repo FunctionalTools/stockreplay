@@ -171,7 +171,7 @@ test('live public research displays dated news, analyst forecasts and market his
   page,
 }) => {
   test.skip(!live)
-  await page.goto('/')
+  await page.goto('/#/research/AAPL')
   await expect(page.getByRole('heading', { name: 'Analyst ratings' })).toBeVisible({
     timeout: 100000,
   })
@@ -180,7 +180,7 @@ test('live public research displays dated news, analyst forecasts and market his
     /stockanalysis.com/,
   )
   await expect(page.locator('.story a').first()).toHaveAttribute('href', /^https?:\/\//)
-  await expect(page.getByRole('img', { name: 'NVDA historical adjusted prices' })).toBeVisible()
+  await expect(page.getByRole('img', { name: /AAPL historical/ })).toBeVisible()
   await expect(page.locator('.quote')).not.toHaveText('—')
   if (process.env.STOCKREPLAY_SCREENSHOTS === '1') {
     await page.screenshot({ path: '../docs/screenshots/research.png' })

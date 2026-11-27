@@ -23,7 +23,7 @@ INTERVALS = {
     "5m": ["5d", "1mo"],
     "15m": ["5d", "1mo"],
     "1h": ["1mo", "3mo", "1y"],
-    "1d": ["1mo", "6mo", "1y", "2y", "5y", "10y"],
+    "1d": ["1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "max"],
     "1wk": ["1y", "5y", "10y"],
     "1mo": ["5y", "10y", "max"],
 }
@@ -88,24 +88,59 @@ def fetch_url(url, params=None):
         return response
 
 
-def chart_data(symbol, interval, span):
-    if interval not in INTERVALS or span not in INTERVALS[interval]:
+def chart_data(symbol, interval, span, start=None, end=None):
+    if interval not in INTERVALS or (span != "custom" and span not in INTERVALS[interval]):
         raise ValueError("Choose a supported period for the selected interval.")
     instrument = yf.Ticker(symbol)
+    window = (
+        {"start": start.isoformat(), "end": (end + timedelta(days=1)).isoformat()}
+        if span == "custom"
+        else {"period": span}
+    )
     frame = instrument.history(
-        period=span, interval=interval, auto_adjust=False, actions=True, timeout=12
+        interval=interval,
+        prepost=False,
+        auto_adjust=False,
+        actions=True,
+        timeout=12,
+        **window,
     )
     if frame.empty:
         raise ValueError(f"Yahoo Finance returned no {interval} bars for {symbol}.")
-    last = latest_session()
+    observed = datetime.now(timezone.utc)
+    last = latest_session(observed)
+    metadata = instrument.history_metadata or {}
+    # Preserve the exchange date for daily bars. Some foreign exchanges have finished
+    # before the US close; a current daily bar is eligible only after its regular close.
+    local_today = observed.astimezone(frame.index.tz).date() if frame.index.tz else observed.date()
+    current_close = ((metadata.get("currentTradingPeriod") or {}).get("regular") or {}).get("end")
+    latest = local_today - timedelta(days=1)
+    if str(frame.index.tz) == "America/New_York" and metadata.get("instrumentType") in (
+        "EQUITY",
+        "ETF",
+        "INDEX",
+        None,
+    ):
+        latest = last
+    elif (
+        isinstance(current_close, (int, float))
+        and frame.index.tz
+        and datetime.fromtimestamp(current_close, frame.index.tz).date() == local_today
+        and current_close <= observed.timestamp()
+    ):
+        latest = local_today
+    adjusted = True
     bars = []
     for stamp, row in frame.sort_index().iterrows():
-        if interval == "1d" and stamp.date() > last:
+        if interval == "1d" and stamp.date() > latest:
             continue
         raw = [number(row.get(k)) for k in ("Open", "High", "Low", "Close")]
         if any(p is None or p <= 0 for p in raw):
             continue
-        adj = number(row.get("Adj Close")) or raw[3]
+        reported_adj = number(row.get("Adj Close"))
+        if not reported_adj:
+            adjusted = False
+        adj = reported_adj or raw[3]
         ratio = adj / raw[3]
         if not (0 < ratio < math.inf):
             continue
@@ -129,8 +164,10 @@ def chart_data(symbol, interval, span):
         )
     if not bars:
         raise ValueError("No completed bars for this selection.")
-    metadata = instrument.history_metadata or {}
     return {
+        "exchange": metadata.get("exchangeName"),
+        "instrument_type": metadata.get("instrumentType"),
+        "adjusted": adjusted,
         "currency": metadata.get("currency"),
         "symbol": symbol,
         "interval": interval,
@@ -156,6 +193,20 @@ def company(symbol):
         "exchange",
         "currency",
         "marketCap",
+        "financialCurrency",
+        "mostRecentQuarter",
+        "priceToBook",
+        "enterpriseToEbitda",
+        "earningsGrowth",
+        "grossMargins",
+        "operatingMargins",
+        "returnOnEquity",
+        "debtToEquity",
+        "currentRatio",
+        "quickRatio",
+        "operatingCashflow",
+        "freeCashflow",
+        "totalRevenue",
         "trailingPE",
         "forwardPE",
         "trailingEps",
@@ -506,6 +557,84 @@ def screen(name):
     return [{k: q.get(k) for k in fields} for q in result["quotes"] if q.get("symbol")]
 
 
+def names_company(article, symbol, profile):
+    """A company feed can include unrelated headlines. Only use named coverage for its score."""
+    text = " ".join((article["title"], article.get("excerpt") or ""))
+    if re.search(
+        r"(?<![\w])" + re.escape(symbol) + r"(?![\w])",
+        text,
+        flags=0 if len(symbol) <= 2 else re.I,
+    ):
+        return True
+    suffixes = {
+        "inc",
+        "incorporated",
+        "corporation",
+        "corp",
+        "company",
+        "co",
+        "plc",
+        "ltd",
+        "limited",
+        "group",
+        "holdings",
+        "holding",
+        "ag",
+        "nv",
+    }
+    for field in ("longName", "shortName"):
+        name = str(profile.get(field) or "").casefold().replace(".com", "").replace("p.l.c.", "plc")
+        words = re.findall(r"[\w&]+", name)
+        if words[:1] == ["the"]:
+            words.pop(0)
+        while words and words[-1] in suffixes:
+            words.pop()
+        if words and re.search(
+            r"(?<!\w)" + r"[^\w]+".join(re.escape(x) for x in words) + r"(?!\w)",
+            text,
+            re.I,
+        ):
+            return True
+    return False
+
+
+def market_comparisons(asset, benchmark):
+    """Use the same trading dates, and matching return intervals for realized beta."""
+    prices = {bar["date"]: bar["close"] for bar in asset}
+    index = {bar["date"]: bar["close"] for bar in benchmark}
+    days = sorted(prices.keys() & index.keys())
+    if not days:
+        return
+    end = days[-1]
+    comparisons = []
+    for window in (21, 63, 126):
+        if len(days) > window:
+            start = days[-window - 1]
+            difference = 100 * (prices[end] / prices[start] - index[end] / index[start])
+            comparisons.append(
+                f"{window} aligned sessions vs SPY: {difference:+.2f} percentage points ({start} to {end})"
+            )
+    if comparisons:
+        yield "relative", ". ".join(comparisons), end
+
+    def changes(rows):
+        return {(a["date"], b["date"]): b["close"] / a["close"] - 1 for a, b in zip(rows, rows[1:])}
+
+    a, b = changes(asset), changes(benchmark)
+    dates = sorted(a.keys() & b.keys())[-126:]
+    if len(dates) < 21:
+        return
+    mean = sum(b[d] for d in dates) / len(dates)
+    squares = sum((b[d] - mean) ** 2 for d in dates)
+    if squares > 1e-16:
+        beta = sum(a[d] * (b[d] - mean) for d in dates) / squares
+        yield (
+            "sensitivity",
+            f"Realized beta vs SPY: {beta:.2f} over {len(dates)} matched daily returns",
+            dates[-1][1],
+        )
+
+
 def technical_rating(chart, benchmark):
     if not chart or not benchmark:
         return None
@@ -577,6 +706,14 @@ class Desk:
             refresh,
         )
 
+    def date_chart(self, symbol, start, end, refresh=False):
+        return self.cache.get(
+            f"range-custom:{symbol}:{start}:{end}",
+            600,
+            lambda: chart_data(symbol, "1d", "custom", start, end),
+            refresh,
+        )
+
     def ratings(self, symbol, refresh=False):
         tasks = {
             "stockanalysis": lambda: self.cache.get(
@@ -633,7 +770,7 @@ class Desk:
         v = parallel(tasks)
         evidence = []
 
-        def add(group, text, url, date, source, excerpt=None, preview=None):
+        def add(group, text, url, date, source, excerpt=None, preview=None, **metadata):
             key = hashlib.sha256((group + str(url) + str(date) + text).encode()).hexdigest()[:14]
             evidence.append(
                 {
@@ -645,6 +782,7 @@ class Desk:
                     "source": source,
                     "excerpt": excerpt,
                     **({"preview": preview} if preview else {}),
+                    **metadata,
                 }
             )
 
@@ -664,7 +802,38 @@ class Desk:
                     measures.append(
                         f"{n}-session return {100 * (p['close'] / bars[-n - 1]['close'] - 1):+.2f}%"
                     )
-            add(group, ", ".join(measures), series["url"], p["date"], "Yahoo Finance")
+            if group == "price":
+                for window in (50, 200):
+                    if len(bars) >= window:
+                        average = sum(bar["close"] for bar in bars[-window:]) / window
+                        measures.append(
+                            f"{100 * (p['close'] / average - 1):+.2f}% versus the {window}-session average"
+                        )
+            add(
+                group,
+                ", ".join(measures),
+                series["url"],
+                p["date"],
+                "Yahoo Finance",
+                date_kind="close",
+                stale=data.get("stale", False),
+            )
+        asset, benchmark = r["chart"], r["benchmark"]
+        if asset["data"] and benchmark["data"]:
+            for factor, text, day in market_comparisons(
+                asset["data"]["bars"], benchmark["data"]["bars"]
+            ):
+                add(
+                    "technical",
+                    text,
+                    asset["data"]["url"],
+                    day,
+                    "StockReplay · Yahoo Finance prices",
+                    factor=factor,
+                    date_kind="close",
+                    stale=bool(asset["stale"] or benchmark["stale"]),
+                    related=[{"url": benchmark["data"]["url"], "label": "SPY price history"}],
+                )
         for k, label, unit in [
             ("volatility_index", "Cboe VIX", "index points"),
             ("treasury_yield", "US ten-year Treasury yield", "%"),
@@ -680,10 +849,19 @@ class Desk:
                 text += f", 21-session change {change:+.2f} " + (
                     "percentage points" if unit == "%" else unit
                 )
-            add("market", text, indicator["url"], last["date"], "Yahoo Finance")
+            add(
+                "market",
+                text,
+                indicator["url"],
+                last["date"],
+                "Yahoo Finance",
+                factor="macro",
+                date_kind="close",
+                stale=v[k]["stale"],
+            )
         c = r["consensus"]
         current = next((x for x in c["data"] or [] if x["period"] == "0m"), None)
-        if current:
+        if current and any(val is not None for k, val in current.items() if k != "period"):
             add(
                 "analysts",
                 "Current consensus response counts: "
@@ -694,7 +872,9 @@ class Desk:
                 ),
                 YAHOO + quote(symbol) + "/analysis/",
                 c["fetched"],
-                "Yahoo Finance · retrieved",
+                "Yahoo Finance",
+                date_kind="retrieved",
+                stale=c["stale"],
             )
         n = r["forecast"]
         if n["data"]:
@@ -703,13 +883,30 @@ class Desk:
                 str(n["data"]["grade"]) + ". " + str(n["data"]["summary"] or ""),
                 n["data"]["url"],
                 n["fetched"],
-                "Stock Analysis · retrieved",
+                "Stock Analysis",
+                date_kind="retrieved",
+                stale=n["stale"],
             )
         profile_stamp = r["profile"]["fetched"]
         analysis_url = YAHOO + quote(symbol) + "/analysis/"
         metrics = []
 
-        def metric(group, label, value, unit, url, stamp, source="Yahoo Finance"):
+        metric_groups = {}
+
+        def metric(
+            group,
+            factor,
+            label,
+            value,
+            unit,
+            url,
+            stamp,
+            source="Yahoo Finance",
+            *,
+            date_kind="retrieved",
+            stale=False,
+            period_end=None,
+        ):
             value = number(value)
             if value is None or not stamp:
                 return
@@ -717,52 +914,136 @@ class Desk:
                 {
                     "group": group,
                     "label": label,
-                    "value": round(value, 2),
+                    "value": round(value, 3),
                     "unit": unit,
                     "url": url,
                     "date": stamp,
                     "source": source,
                 }
             )
-            add(group, f"{label}: {value:,.2f} {unit}".strip(), url, stamp, source)
+            # Keep related observations together so even the compact model request sees the range.
+            key = (group, factor, url, stamp, source, date_kind, stale, period_end)
+            metric_groups.setdefault(key, []).append(f"{label}: {value:,.2f} {unit}".strip())
+
+        def epoch_day(value):
+            value = number(value)
+            if value is not None and 0 < value < 4102444800:
+                return datetime.fromtimestamp(value, timezone.utc).date().isoformat()
+            return None
 
         currency = profile.get("currency") or ""
-        for key, label, unit in [
-            ("targetMeanPrice", "Average analyst target", currency),
-            ("targetLowPrice", "Low analyst target", currency),
-            ("targetHighPrice", "High analyst target", currency),
-            ("forwardEps", "Estimated earnings per share", currency),
+        accounts_currency = profile.get("financialCurrency") or "currency unreported"
+        quarter = epoch_day(profile.get("mostRecentQuarter"))
+        stats_url = YAHOO + quote(symbol) + "/key-statistics/"
+        profile_stale = r["profile"]["stale"]
+        # Yahoo reports fractional growth and margins, and debt/equity in percentage points.
+        for field, factor, title, multiplier, unit in [
+            ("trailingPE", "valuation", "Trailing price / earnings", 1, "×"),
+            ("forwardPE", "valuation", "Forward price / earnings", 1, "×"),
+            ("priceToBook", "valuation", "Price / book value", 1, "×"),
+            ("enterpriseToEbitda", "valuation", "Enterprise value / EBITDA", 1, "×"),
+            (
+                "revenueGrowth",
+                "growth",
+                "Quarterly revenue growth, year over year",
+                100,
+                "%",
+            ),
+            (
+                "earningsGrowth",
+                "growth",
+                "Quarterly earnings growth, year over year",
+                100,
+                "%",
+            ),
+            ("grossMargins", "profitability", "Gross margin", 100, "%"),
+            ("operatingMargins", "profitability", "Operating margin", 100, "%"),
+            ("profitMargins", "profitability", "Net margin", 100, "%"),
+            ("returnOnEquity", "profitability", "Return on equity", 100, "%"),
+            ("debtToEquity", "balance_sheet", "Debt / equity", 1, "%"),
+            ("currentRatio", "balance_sheet", "Current ratio", 1, "×"),
+            ("quickRatio", "balance_sheet", "Quick ratio", 1, "×"),
+            (
+                "operatingCashflow",
+                "cash_flow",
+                "Operating cash flow, trailing year",
+                1,
+                accounts_currency,
+            ),
+            (
+                "freeCashflow",
+                "cash_flow",
+                "Free cash flow, trailing year",
+                1,
+                accounts_currency,
+            ),
         ]:
-            metric("estimates", label, profile.get(key), unit, analysis_url, profile_stamp)
-        metric(
-            "fundamentals",
-            "Forward price / earnings",
-            profile.get("forwardPE"),
-            "×",
-            YAHOO + quote(symbol) + "/key-statistics/",
-            profile_stamp,
+            value = number(profile.get(field))
+            if value is not None:
+                metric(
+                    "fundamentals",
+                    factor,
+                    title,
+                    value * multiplier,
+                    unit,
+                    stats_url,
+                    profile_stamp,
+                    stale=profile_stale,
+                    period_end=quarter if factor != "valuation" else None,
+                )
+        cash, revenue = (
+            number(profile.get("freeCashflow")),
+            number(profile.get("totalRevenue")),
         )
+        if cash is not None and revenue is not None and revenue > 0:
+            metric(
+                "fundamentals",
+                "cash_flow",
+                "Free cash flow / revenue",
+                cash / revenue * 100,
+                "%",
+                stats_url,
+                profile_stamp,
+                stale=profile_stale,
+                period_end=quarter,
+            )
+        for key, label in [
+            ("targetMeanPrice", "Average analyst target"),
+            ("targetLowPrice", "Low analyst target"),
+            ("targetHighPrice", "High analyst target"),
+            ("forwardEps", "Estimated earnings per share"),
+        ]:
+            metric(
+                "estimates",
+                "earnings" if key == "forwardEps" else "targets",
+                label,
+                profile.get(key),
+                currency,
+                analysis_url,
+                profile_stamp,
+                stale=profile_stale,
+            )
         metric(
             "risk",
+            "sensitivity",
             "Five-year beta",
             profile.get("beta"),
             "×",
-            YAHOO + quote(symbol) + "/key-statistics/",
+            stats_url,
             profile_stamp,
+            stale=profile_stale,
         )
-        gov = profile.get("governanceEpochDate")
-        gov_date = (
-            datetime.fromtimestamp(gov, timezone.utc).date().isoformat()
-            if isinstance(gov, (int, float)) and 0 < gov < 4102444800
-            else profile_stamp
-        )
+        gov_date = epoch_day(profile.get("governanceEpochDate"))
         metric(
             "risk",
+            "governance",
             "ISS governance risk (1 low, 10 high)",
             profile.get("overallRisk"),
             "/ 10",
             YAHOO + quote(symbol) + "/profile/",
-            gov_date,
+            gov_date or profile_stamp,
+            date_kind="published" if gov_date else "retrieved",
+            stale=profile_stale,
         )
         series = r["chart"]["data"]
         if series:
@@ -777,34 +1058,63 @@ class Desk:
                 label = f"{len(returns)}-session"
                 metric(
                     "risk",
+                    "price_risk",
                     label + " annualized volatility",
                     stdev(returns) * math.sqrt(252) * 100,
                     "%",
                     series["url"],
                     bars[-1]["date"],
                     "StockReplay · Yahoo Finance prices",
+                    date_kind="close",
+                    stale=r["chart"]["stale"],
                 )
                 metric(
                     "risk",
+                    "price_risk",
                     label + " maximum drawdown",
                     drawdown * 100,
                     "%",
                     series["url"],
                     bars[-1]["date"],
                     "StockReplay · Yahoo Finance prices",
+                    date_kind="close",
+                    stale=r["chart"]["stale"],
                 )
         if n["data"]:
             f = n["data"]
             for label in ("low", "average", "high"):
                 metric(
                     "estimates",
+                    "targets",
                     "Analyst target (" + label + ")",
                     f["targets"].get(label),
                     currency,
                     f["url"],
                     n["fetched"],
                     "Stock Analysis",
+                    stale=n["stale"],
                 )
+        for (
+            group,
+            factor,
+            url,
+            stamp,
+            source,
+            date_kind,
+            stale,
+            period_end,
+        ), parts in metric_groups.items():
+            add(
+                group,
+                ". ".join(parts),
+                url,
+                stamp,
+                source,
+                factor=factor,
+                date_kind=date_kind,
+                stale=stale,
+                **({"period_end": period_end} if period_end else {}),
+            )
         for x in sorted(
             (r["actions"]["data"] or [])[:5] + (r["stockanalysis"]["data"] or [])[:5],
             key=lambda x: x["date"],
@@ -816,6 +1126,7 @@ class Desk:
                 x["url"],
                 x["date"],
                 x["source"],
+                date_kind="published",
             )
         seen = set()
         cutoff = datetime.now(timezone.utc) - timedelta(days=30)
@@ -826,6 +1137,13 @@ class Desk:
                 ) <= datetime.now(timezone.utc) + timedelta(minutes=5):
                     continue
                 seen.add(item["url"])
+                relevance = {}
+                if k == "company_news":
+                    headline = names_company({"title": item["title"]}, symbol, profile)
+                    relevance = {
+                        "headline_company": headline,
+                        "names_company": headline or names_company(item, symbol, profile),
+                    }
                 add(
                     item["category"] + "_news",
                     item["title"],
@@ -834,6 +1152,9 @@ class Desk:
                     item["publisher"],
                     item.get("excerpt"),
                     item.get("preview"),
+                    date_kind="published",
+                    stale=v[k]["stale"],
+                    **relevance,
                 )
         self.photos.attach(evidence)
         issues = [

@@ -54,7 +54,7 @@ test('article previews use decoded photos and keep unavailable media out of the 
     ]
     await route.fulfill({ response, json: brief })
   })
-  await page.goto('/')
+  await page.goto('/#/research/NVDA')
   const news = page.locator('#news')
   await news.scrollIntoViewIfNeeded()
   const good = news

@@ -11,33 +11,29 @@ import {
   Plus,
   Trash2,
 } from 'lucide-react'
-import { api, errorText } from './types'
+import { api, errorText, pct } from './types'
 import { Busy, ErrorBox, Field, Modal } from './ui'
 import { useResource, SourceLink } from './deskCommon'
-import { usePrices, PricePlot } from './PricePlot'
+import { usePricePackets, PricePlot } from './PricePlot'
+import { rangePresets, rangePath, rangeLabel, type RangePrices } from './ResearchRange'
+import { Gauge } from './Research'
 import { NewsPreviews } from './NewsPreviews'
-import { amount, shortDay, type Source, type SavedList } from './workspace'
-import {
-  tabHref,
-  tabSpans,
-  tabViews,
-  type CustomTab,
-  type TabBlock,
-  type TabSummary,
-} from './customTabs'
+import { amount, shortDay, type Source, type SavedList, type Opinion } from './workspace'
+import { tabHref, tabViews, type CustomTab, type TabBlock, type TabSummary } from './customTabs'
 import './customTabs.css'
 
 const labels: Record<TabBlock['view'], string> = {
   chart: 'Price chart',
   news: 'Latest news',
   ratings: 'Analyst ratings',
+  scores: 'Buy and risk scores',
   watchlist: 'Watchlist',
   portfolio: 'Portfolio totals',
   note: 'Note',
 }
 const newBlock = (view: TabBlock['view'], symbol: string): TabBlock => ({
   view,
-  value: ['chart', 'news', 'ratings'].includes(view) ? symbol : '',
+  value: ['chart', 'news', 'ratings', 'scores'].includes(view) ? symbol : '',
   span: '1y',
 })
 
@@ -294,16 +290,7 @@ function TabEditor({
                 )
               )}
               {block.view === 'chart' && (
-                <Field name="Chart period">
-                  <select
-                    value={block.span}
-                    onChange={(e) => edit(i, { span: e.target.value as TabBlock['span'] })}
-                  >
-                    {tabSpans.map((span) => (
-                      <option key={span}>{span}</option>
-                    ))}
-                  </select>
-                </Field>
+                <BlockRange value={block.span} change={(span) => edit(i, { span })} />
               )}
             </fieldset>
           ))}
@@ -342,18 +329,107 @@ function TabEditor({
   )
 }
 
+function BlockRange({ value, change }: { value: string; change: (s: string) => void }) {
+  const [from, to] = value.split('/')
+  const custom = to !== undefined
+  return (
+    <>
+      <Field name="Chart period">
+        <select
+          value={custom ? 'custom' : value}
+          onChange={(e) => change(e.target.value === 'custom' ? '/' : e.target.value)}
+        >
+          {rangePresets.map((span) => (
+            <option key={span} value={span}>
+              {rangeLabel(span)}
+            </option>
+          ))}
+        </select>
+      </Field>
+      {custom && (
+        <div className="tab-range-dates">
+          <Field name="Start date">
+            <input
+              type="date"
+              required
+              value={from}
+              max={to || undefined}
+              onChange={(e) => change(e.target.value + '/' + to)}
+            />
+          </Field>
+          <Field name="End date">
+            <input
+              type="date"
+              required
+              value={to}
+              min={from || undefined}
+              onChange={(e) => change(from + '/' + e.target.value)}
+            />
+          </Field>
+        </div>
+      )}
+    </>
+  )
+}
 function ChartBlock({ block }: { block: TabBlock }) {
-  const symbols = block.value.split(',').map((s) => s.trim()),
-    prices = usePrices(symbols, block.span)
+  const symbols = block.value.split(',').map((s) => s.trim())
+  const [from, to] = block.span.split('/')
+  const period = to ? 'custom' : block.span
+  const prices = usePricePackets<RangePrices>(
+    symbols.map((symbol) => ({ symbol, path: rangePath(symbol, period, from, to) })),
+  )
   return (
     <>
       <div className="tab-widget-title">
         <h2>{symbols.join(' / ')}</h2>
-        <small>{block.span}</small>
+        <small>{to ? shortDay(from) + ' – ' + shortDay(to) : rangeLabel(period)}</small>
       </div>
       {prices.loading && <Busy text="Loading chart" />}
       <ErrorBox text={prices.errors.join(' ')} />
       <PricePlot series={prices.series} compact />
+      <div className="tab-chart-returns">
+        {prices.series.map((s) => (
+          <a
+            key={s.symbol}
+            href={
+              '#/research/' +
+              encodeURIComponent(s.symbol) +
+              '/range_' +
+              (to ? 'custom_' + from + '_' + to : period)
+            }
+          >
+            {s.symbol} <strong>{pct(s.performance.percent)}</strong>
+          </a>
+        ))}
+      </div>
+    </>
+  )
+}
+function ScoreBlock({ symbol }: { symbol: string }) {
+  const history = useResource<Opinion[]>('/desk/recommend/' + encodeURIComponent(symbol))
+  const item = history.data?.find((o) => o.buy_score != null && o.risk_score != null)
+  const href = '#/research/' + encodeURIComponent(symbol) + '/scores'
+  return (
+    <>
+      <div className="tab-widget-title">
+        <h2>Buy and risk scores</h2>
+        <a href={href}>{symbol}</a>
+      </div>
+      {history.loading && <Busy text="Reading saved assessment" />}
+      <ErrorBox text={history.error} />
+      {item && (
+        <>
+          <div className="gauges">
+            <Gauge score={item.buy_score} />
+            <Gauge score={item.risk_score} risk />
+          </div>
+          <small>
+            {shortDay(item.created)} · {item.model}
+          </small>
+        </>
+      )}
+      {history.data && !item && <p>No saved scores for {symbol} yet.</p>}
+      <a href={href}>{item ? 'See factors and sources' : 'Open assessment'}</a>
     </>
   )
 }
@@ -561,6 +637,8 @@ export function CustomTabView({
               <ChartBlock block={b} />
             ) : b.view === 'news' || b.view === 'ratings' ? (
               <MarketBlock block={b} />
+            ) : b.view === 'scores' ? (
+              <ScoreBlock symbol={b.value} />
             ) : b.view === 'watchlist' ? (
               <WatchBlock name={b.value} />
             ) : b.view === 'portfolio' ? (

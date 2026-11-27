@@ -1,5 +1,6 @@
 import { useState, type MouseEvent } from 'react'
 import { ArrowUpRight, ChevronDown, CornerDownRight } from 'lucide-react'
+import { validRangeFocus } from './ResearchRange'
 import { ChatGraph } from './PricePlot'
 import { amount, tickerPattern, type Page } from './workspace'
 import type { ChatLink, Entry, Row } from './chatHistory'
@@ -19,7 +20,12 @@ const focuses = [
 ]
 export function linkUrl(link: ChatLink, symbol: string) {
   if (link.tab) return /^[a-f0-9]{32}$/.test(link.tab) ? '#/tabs/' + link.tab : null
-  if (!pages.includes(link.page) || !focuses.includes(link.focus || '')) return null
+  if (
+    !pages.includes(link.page) ||
+    (!focuses.includes(link.focus || '') &&
+      !(link.page === 'Research' && validRangeFocus(link.focus || '')))
+  )
+    return null
   const asset = (link.symbol || symbol).toUpperCase()
   if (!tickerPattern.test(asset)) return null
   return (
@@ -42,7 +48,7 @@ export function ChatAnchor({ link, symbol, follow }: { link: ChatLink } & NavPro
   return (
     <a className="chat-link" href={href} onClick={click}>
       <CornerDownRight size={12} aria-hidden />
-      {link.label.slice(0, 100)}
+      <span>{link.label}</span>
     </a>
   )
 }
@@ -167,7 +173,11 @@ export function ChatMessage({
   follow,
   busy,
   decide,
-}: { entry: Entry; busy: boolean; decide: (e: Entry, yes: boolean) => void } & NavProps) {
+}: {
+  entry: Entry
+  busy: boolean
+  decide: (e: Entry, yes: boolean) => void
+} & NavProps) {
   const refs = (e.sources || []).filter((s) => sourceUrl(s.url))
   const links = (e.links || []).filter(
     (l, i, a) =>
@@ -175,7 +185,7 @@ export function ChatMessage({
   )
   return (
     <article
-      className={'bubble ' + e.role + (e.error ? ' chat-error' : '')}
+      className={'bubble' + (e.role === 'user' ? ' user' : '') + (e.error ? ' chat-error' : '')}
       aria-label={e.role === 'user' ? 'Your message' : 'Assistant response'}
     >
       <Text entry={e} symbol={symbol} follow={follow} />

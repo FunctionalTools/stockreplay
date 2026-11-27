@@ -3,13 +3,15 @@ export type Preferences = {
   appearance: 'system' | 'light' | 'dark'
   accent: 'forest' | 'ocean' | 'violet' | 'amber'
   advanced: boolean
+  home_mode: 'portfolio' | 'ticker'
   home_symbol: string
 }
 export const firstPreferences: Preferences = {
   appearance: 'system',
   accent: 'forest',
   advanced: false,
-  home_symbol: 'NVDA',
+  home_mode: 'portfolio',
+  home_symbol: 'SPY',
 }
 export type Connection = {
   configured: boolean
@@ -27,13 +29,26 @@ export type Source = {
   source: string
   url: string
   excerpt?: string | null
+  date_kind?: 'close' | 'published' | 'retrieved'
+  period_end?: string
+  stale?: boolean
+  related?: { url: string; label: string }[]
 }
 export type Point = { text: string; citations: string[] }
+export type FactorEffect = Point & { direction: 'Raises' | 'Lowers' | 'Mixed' | 'Neutral' }
+export type ScoreFactor = {
+  id: string
+  label: string
+  status: 'used' | 'older' | 'missing'
+  buy?: FactorEffect
+  risk?: FactorEffect
+}
 export type Opinion = {
   id: string
   symbol: string
   buy_score?: number
   risk_score?: number
+  factors?: ScoreFactor[]
   confidence?: string
   horizon?: string
   created: string

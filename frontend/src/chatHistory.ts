@@ -3,8 +3,19 @@ import { api, errorText } from './types'
 import type { Page, Source } from './workspace'
 import type { Action } from './Assistant'
 
-export type ChatLink = { label: string; page: Page; symbol?: string; focus?: string; tab?: string }
-export type Row = { name: string; currency: string; value: number | null; quantity?: number | null }
+export type ChatLink = {
+  label: string
+  page: Page
+  symbol?: string
+  focus?: string
+  tab?: string
+}
+export type Row = {
+  name: string
+  currency: string
+  value: number | null
+  quantity?: number | null
+}
 export type Entry = {
   id: number
   role: 'user' | 'assistant'
@@ -18,7 +29,13 @@ export type Entry = {
   confirmation?: { action: Action; pending: boolean; expired?: boolean }
 }
 export type Context = { role: 'user' | 'assistant'; text: string }[]
-type Summary = { id: string; title: string; created: string; updated: string; revision: number }
+type Summary = {
+  id: string
+  title: string
+  created: string
+  updated: string
+  revision: number
+}
 type Chat = Summary & { entries: Entry[]; context: Context }
 type Changed = Pick<Chat, 'entries' | 'context' | 'title'>
 const path = '/assistant/chats'
@@ -91,7 +108,10 @@ function restored(chat: Chat): Chat {
     ...chat,
     entries: chat.entries.map((e) =>
       e.confirmation?.pending
-        ? { ...e, confirmation: { ...e.confirmation, pending: false, expired: true } }
+        ? {
+            ...e,
+            confirmation: { ...e.confirmation, pending: false, expired: true },
+          }
         : e,
     ),
   }
@@ -243,18 +263,24 @@ export function useChatHistory() {
       load(false)
     }
   }
-  async function ensure(title: string) {
+  async function startTurn(text: string): Promise<Context> {
     if (!initialized.current) throw Error('Open chat history again to load your conversations.')
-    if (current.current) return current.current
-    newId.current ??= crypto.randomUUID()
-    const v = await api<Chat>(path, 'POST', {
-      id: newId.current,
-      title: title.replace(/\s+/g, ' ').trim().slice(0, 70),
-    })
-    newId.current = null
-    show(v)
-    track(v)
-    return v
+    if (!current.current) {
+      const stamp = new Date().toISOString()
+      // Revision -1 is a local draft whose first turn has not been acknowledged by SQLite.
+      current.current = {
+        id: crypto.randomUUID(),
+        revision: -1,
+        created: stamp,
+        updated: stamp,
+        title: text.replace(/\s+/g, ' ').trim().slice(0, 70),
+        entries: [],
+        context: [],
+      }
+    }
+    const msgs = [...current.current.context, { role: 'user' as const, text }].slice(-15)
+    await append({ role: 'user', text }, msgs)
+    return msgs
   }
   async function write(change: Partial<Changed> = {}) {
     const prev = current.current
@@ -268,12 +294,18 @@ export function useChatHistory() {
     pending.current = true
     mark(true)
     try {
-      const v = await api<Chat>(path + '/' + next.id, 'PUT', {
+      const payload = {
         title: next.title,
-        revision: next.revision,
         entries: next.entries,
         context: next.context,
-      })
+      }
+      const v =
+        next.revision === -1
+          ? await api<Chat>(path, 'POST', { ...payload, id: next.id })
+          : await api<Chat>(path + '/' + next.id, 'PUT', {
+              ...payload,
+              revision: next.revision,
+            })
       show(v)
       track(v)
       clean()
@@ -339,7 +371,7 @@ export function useChatHistory() {
     error,
     init,
     open,
-    ensure,
+    startTurn,
     append,
     write,
     refresh,

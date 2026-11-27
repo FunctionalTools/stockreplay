@@ -3,28 +3,38 @@
 import json
 import re
 import sqlite3
+from datetime import date
 from typing import Literal
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import Field, model_validator
+from .price_ranges import RANGE_PRESETS, validate_range
 from .schema import Model
 from .store import encode, now
 
 
 class TabBlock(Model):
-    view: Literal["chart", "news", "ratings", "watchlist", "portfolio", "note"]
+    view: Literal["chart", "news", "ratings", "scores", "watchlist", "portfolio", "note"]
     value: str = Field(default="", max_length=2500)
-    span: Literal["1mo", "6mo", "1y", "2y", "5y", "10y"] = "1y"
+    span: str = Field(default="1y", max_length=21)
 
     @model_validator(mode="after")
     def validate_content(self):
-        if self.view in {"chart", "news", "ratings"}:
+        if self.span not in RANGE_PRESETS or self.span == "custom":
+            if self.view != "chart" or not re.fullmatch(
+                r"\d{4}-\d{2}-\d{2}/\d{4}-\d{2}-\d{2}", self.span
+            ):
+                raise ValueError("Choose a chart period or enter a start and end date.")
+            start, _ = validate_range("custom", *self.span.split("/"))
+            if start > date.today():
+                raise ValueError("Choose a range that includes past or current observations.")
+        if self.view in {"chart", "news", "ratings", "scores"}:
             symbols = list(dict.fromkeys(s.strip().upper() for s in self.value.split(",")))
             if len(symbols) > (4 if self.view == "chart" else 1) or any(
                 not re.fullmatch(r"[A-Z0-9^][A-Z0-9.^=-]{0,19}", s) for s in symbols
             ):
-                raise ValueError("Enter one ticker for news or ratings, or up to four for a chart.")
+                raise ValueError("Enter one ticker for a stock block or up to four for a chart.")
             self.value = ", ".join(symbols)
         elif self.view == "portfolio":
             self.value = ""

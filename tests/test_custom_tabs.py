@@ -35,8 +35,22 @@ def test_tab_blocks_are_typed_and_atomic(tmp_path):
         {"view": "news", "value": "NVDA,AAPL"},
         {"view": "chart", "value": "http://example.com"},
         {"view": "chart", "value": "NVDA", "span": "anything"},
+        {"view": "chart", "value": "AAPL", "span": "2024-02-31/2024-03-01"},
+        {"view": "chart", "value": "AAPL", "span": "2024-03-02/2024-03-01"},
+        {"view": "scores", "value": "AAPL,MSFT"},
         {"view": "note", "value": ""},
     ]:
         response = client.post("/api/tabs", json={"title": "Invalid", "blocks": [block]})
         assert response.status_code == 422
     assert client.get("/api/tabs").json() == []
+
+
+def test_saved_tab_keeps_precise_periods_and_score_source(tmp_path):
+    client = TestClient(create_app(tmp_path))
+    ranges = ["1d", "5d", "1mo", "3mo", "ytd", "max", "2024-02-29/2024-04-01"]
+    charts = [{"view": "chart", "value": "SPY", "span": span} for span in ranges]
+    blocks = [*charts, {"view": "scores", "value": "MSFT", "span": "1y"}]
+    response = client.post("/api/tabs", json={"title": "My market view", "blocks": blocks})
+    assert response.status_code == 201
+    path = "/api/tabs/" + response.json()["id"]
+    assert TestClient(create_app(tmp_path)).get(path).json()["blocks"] == blocks

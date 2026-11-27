@@ -195,6 +195,15 @@ def test_planner_returns_controlled_links_and_compact_text(tmp_path, monkeypatch
         return 0, depth
 
     count, depth = stats(schema)
+    definitions = schema["$defs"]
+    for variant in variants:
+        for arg in variant["properties"].values():
+            if "$ref" in arg:
+                definition = definitions[arg["$ref"].removeprefix("#/$defs/")]
+                assert definition["additionalProperties"] is False
+                # The root and action wrapper appear above this argument.
+                depth = max(depth, 2 + stats(definition)[1])
+    count += sum(stats(definition)[0] for definition in definitions.values())
     assert count <= 100 and depth <= 5, (count, depth)
 
 
@@ -263,7 +272,10 @@ def test_initial_transcript_is_atomic_and_lost_response_can_be_retried(tmp_path)
                     "data": {"secret": "sk-this-must-not-hit-storage"},
                 }
             ],
-            [{"id": 1, "role": "user", "text": "a"}, {"id": 1, "role": "user", "text": "b"}],
+            [
+                {"id": 1, "role": "user", "text": "a"},
+                {"id": 1, "role": "user", "text": "b"},
+            ],
         ]:
             other = str(uuid4())
             assert c.post(BASE, json={**copy, "id": other, "entries": entries}).status_code == 422
