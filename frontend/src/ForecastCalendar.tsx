@@ -1,8 +1,8 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ArrowLeft, Plus, RefreshCw, X } from 'lucide-react'
 import { SourceLink, useResource } from './deskCommon'
 import { ErrorBox } from './ui'
-import { shortDay, tickerPattern } from './workspace'
+import { tickerPattern, type Connection } from './workspace'
 import {
   dayTime,
   eventPeriod,
@@ -10,16 +10,24 @@ import {
   calendarHref,
   forecastInspectionDate,
   horizons,
+  isLastPriceReference,
   type CalendarSelection,
   type Events,
-  type Forecast,
   type Horizon,
   type MarketEvent,
   type Projections,
 } from './forecastData'
 import { validDay } from './priceRanges'
-import { futureHref } from './forecastSnapshot'
+import {
+  futureHref,
+  snapshotPath,
+  matchesActiveForecast,
+  combinedForecastEvents,
+  type ForecastSnapshot,
+  type ForecastResponse,
+} from './forecastSnapshot'
 import { ForecastChart, lineColors } from './ForecastChart'
+import { PredictionDetails } from './PredictionDetails'
 import { ForecastEvents } from './ForecastEvents'
 import './forecastCalendar.css'
 
@@ -41,75 +49,46 @@ function civilPeriod({ horizon, start: from, end: to }: CalendarSelection) {
   }
   return { start, end: end.toISOString().slice(0, 10) }
 }
-function ForecastSources({ series, seed }: { series: Forecast[]; seed: number }) {
-  return (
-    <details className="panel fc-sources">
-      <summary>How the forecast is calculated</summary>
-      <p>
-        The center line is the median simulated price. The shaded range spans the 10th through 90th
-        percentiles of the model’s simulated outcomes. Actual prices can fall outside the range.
-      </p>
-      <div className="fc-source-grid">
-        {series.map((s) => (
-          <section key={s.symbol}>
-            <h3>{s.symbol}</h3>
-            <small>
-              Confirmed daily closes through {shortDay(s.coverage.end)} · {s.calendar}
-            </small>
-            <p>
-              {s.method}
-              {s.model_version ? ' · ' + s.model_version : ''}
-            </p>
-            <dl>
-              <div>
-                <dt>Price history</dt>
-                <dd>
-                  {shortDay(s.coverage.start)} – {shortDay(s.coverage.end)}
-                </dd>
-              </div>
-              <div>
-                <dt>Historical returns</dt>
-                <dd>{s.coverage.returns.toLocaleString()}</dd>
-              </div>
-              <div>
-                <dt>Annualized volatility</dt>
-                <dd>{s.annualized_volatility_pct.toFixed(1)}%</dd>
-              </div>
-              {s.validation_1d?.observed_coverage_pct != null && (
-                <div>
-                  <dt>One-day validation</dt>
-                  <dd>
-                    {s.validation_1d.inside_band_sessions} of {s.validation_1d.tested_sessions} past
-                    closes within the modeled range
-                  </dd>
-                </div>
-              )}
-              <div>
-                <dt>Simulation seed</dt>
-                <dd>{seed}</dd>
-              </div>
-            </dl>
-            {s.assumptions.length > 0 && (
-              <ul>
-                {s.assumptions.map((a) => (
-                  <li key={a}>{a}</li>
-                ))}
-              </ul>
-            )}
-            {s.url ? <SourceLink url={s.url}>{s.source}</SourceLink> : <small>{s.source}</small>}
-            {s.fetched && <small> · Retrieved {shortDay(s.fetched)}</small>}
-          </section>
-        ))}
-      </div>
-    </details>
-  )
+// The calendar opens saved predictions without asking the provider to run again.
+function SavedCalendarPrediction({
+  path,
+  receive,
+}: {
+  path: string
+  receive: (snapshot: ForecastSnapshot) => void
+}) {
+  const saved = useResource<ForecastResponse>(path)
+  useEffect(() => {
+    if (saved.data?.forecast) receive(saved.data.forecast)
+  }, [saved.data, receive])
+  return null
 }
-function CalendarResults(selection: CalendarSelection) {
+function CalendarResults({
+  connection,
+  ...selection
+}: CalendarSelection & { connection: Connection | null }) {
   const { symbols, horizon, start, end } = selection
   const custom = horizon === 'custom' && start && end ? { start, end } : null
   const query = new URLSearchParams({ symbols: symbols.join(','), horizon, seed: '42', ...custom })
   const projection = useResource<Projections>('/desk/projections?' + query)
-  const series = projection.data?.series
+  const [saved, setSaved] = useState<Record<string, ForecastSnapshot>>({})
+  const receive = useCallback(
+    (f: ForecastSnapshot) =>
+      setSaved((prev) => (prev[f.symbol]?.id === f.id ? prev : { ...prev, [f.symbol]: f })),
+    [],
+  )
+  const snapshots = useMemo(
+    () =>
+      (projection.data?.series || []).flatMap((s) => {
+        const candidate = saved[s.symbol]
+        return matchesActiveForecast(candidate, s, connection) ? [candidate] : []
+      }),
+    [projection.data, saved, connection],
+  )
+  const series = useMemo(
+    () => projection.data?.series.map((s) => snapshots.find((f) => f.symbol === s.symbol) || s),
+    [projection.data, snapshots],
+  )
   const period = custom || (series && eventPeriod(series)) || civilPeriod(selection)
   const [firstEvents, laterEvents] = eventPaths(symbols, period.start, period.end)
   const ready = !projection.loading || !!projection.data
@@ -118,14 +97,12 @@ function CalendarResults(selection: CalendarSelection) {
   const [selectedDate, setDate] = useState<string | null>(null),
     [eventId, selectEvent] = useState<string | null>(null)
   const events = useMemo(
-    () => [
-      ...new Map(
-        [...(calendar.data?.events || emptyEvents), ...(later.data?.events || emptyEvents)].map(
-          (e) => [e.id, e],
-        ),
-      ).values(),
-    ],
-    [calendar.data, later.data],
+    () =>
+      combinedForecastEvents(snapshots, [
+        ...(calendar.data?.events || emptyEvents),
+        ...(later.data?.events || emptyEvents),
+      ]),
+    [snapshots, calendar.data, later.data],
   )
   const gaps = [
     ...new Map(
@@ -141,6 +118,14 @@ function CalendarResults(selection: CalendarSelection) {
   const inspect = (e: MarketEvent) => selectEvent(e.id)
   return (
     <>
+      {connection?.configured &&
+        symbols.map((symbol) => (
+          <SavedCalendarPrediction
+            key={symbol}
+            path={snapshotPath(symbol, { preset: horizon, start, end })}
+            receive={receive}
+          />
+        ))}
       {projection.loading && !series && (
         <p role="status">Loading observed prices and simulating future sessions…</p>
       )}
@@ -173,6 +158,7 @@ function CalendarResults(selection: CalendarSelection) {
             ))}
           <ForecastChart
             series={series}
+            aiSymbols={snapshots.map((f) => f.symbol)}
             symbols={symbols}
             events={events}
             date={date}
@@ -182,7 +168,11 @@ function CalendarResults(selection: CalendarSelection) {
             forwardStart={custom?.start}
           />
           <p className="fc-model-caption">
-            Simulated from historical prices. Events are shown for context.
+            {series.every(isLastPriceReference)
+              ? 'Last observed prices carried forward by trading session.'
+              : series.some(isLastPriceReference)
+                ? 'Closing price predictions and last-price references by trading session.'
+                : 'Predicted closing prices by trading session.'}
             {series.flatMap((s) =>
               (s.price_sources || [{ source: s.source, url: s.url }]).flatMap((source) =>
                 source.url ? (
@@ -231,14 +221,16 @@ function CalendarResults(selection: CalendarSelection) {
           </ul>
         </details>
       )}
-      {!!series?.length && <ForecastSources series={series} seed={projection.data!.seed} />}
+      {!!series?.length && <PredictionDetails series={series} snapshots={snapshots} panel />}
     </>
   )
 }
 export function ForecastCalendar({
   selection,
   change,
+  connection,
 }: {
+  connection: Connection | null
   selection: CalendarSelection
   change: (s: CalendarSelection) => void
 }) {
@@ -364,7 +356,7 @@ export function ForecastCalendar({
           </form>
         )}
       </section>
-      <CalendarResults key={calendarHref(selection)} {...selection} />
+      <CalendarResults key={calendarHref(selection)} {...selection} connection={connection} />
     </div>
   )
 }

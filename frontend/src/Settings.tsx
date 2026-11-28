@@ -79,6 +79,10 @@ function HostedAISettings({
   return (
     <>
       <div className="hosted-setup">
+        <p>
+          Research automatically requests a price prediction when you select a ticker or forecast
+          period. These requests use your selected model and its account limits.
+        </p>
         {ollama ? (
           <p>
             Paste your ollama.com key to run the model and search the web through Ollama Cloud.{' '}

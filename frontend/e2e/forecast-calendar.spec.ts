@@ -38,10 +38,10 @@ test('Research opens a dated forecast, compares tickers, and preserves horizon o
 }) => {
   await events(page)
   await page.goto('/#/research/AAPL')
-  await page.getByRole('link', { name: 'Forecast calendar' }).click()
+  await page.locator('.page-head').getByRole('link', { name: 'Forecast calendar' }).click()
   await expect(page).toHaveURL(/#\/calendar\/AAPL$/)
   await expect(page.getByRole('heading', { name: 'Price projection' })).toBeVisible()
-  await expect(page.locator('[data-symbol="AAPL"] path[data-line="actual"]')).toHaveAttribute(
+  await expect(page.locator('[data-symbol="AAPL"] path[data-line="prediction"]')).toHaveAttribute(
     'd',
     /^M.+L/,
   )
@@ -81,11 +81,10 @@ test('Research opens a dated forecast, compares tickers, and preserves horizon o
       const cells = rows.nth(row).locator('td')
       await expect(cells.nth(0)).toHaveText('—')
       await expect(cells.nth(1)).toHaveText(/\d/)
-      await expect(cells.nth(2)).toHaveText(/\d.* – .*\d/)
+      await expect(cells.nth(2)).toHaveText(/\d%$/)
     }
-    await expect(page.locator('path[data-line="median"]')).toHaveCount(2)
-    await expect(page.locator('path[data-line="upper"]')).toHaveCount(2)
-    await expect(page.locator('path[data-line="lower"]')).toHaveCount(2)
+    await expect(page.locator('path[data-line="prediction"]')).toHaveCount(2)
+    await expect(page.locator('.forecast-plot svg path')).toHaveCount(2)
   }
   const link = page.url()
   await page.reload()
@@ -96,7 +95,7 @@ test('Research opens a dated forecast, compares tickers, and preserves horizon o
   )
   await page.getByRole('button', { name: 'Remove AAPL from forecast' }).click()
   await expect(page).toHaveURL(/calendar\/MSFT\?horizon=5y$/)
-  await expect(page.locator('[data-symbol="MSFT"] path[data-line="median"]')).toBeVisible()
+  await expect(page.locator('[data-symbol="MSFT"] path[data-line="prediction"]')).toBeVisible()
   await page.goBack()
   await expect(page.getByRole('heading', { name: 'Projected returns' })).toBeVisible()
 })
@@ -150,9 +149,11 @@ test('timeline plays, scrubs with keys and exposes a linked event from both cale
   await expect(section.getByText('Select a date')).toBeVisible()
   await section.getByRole('button', { name: 'Agenda' }).click()
   await expect(section.getByRole('link', { name: 'Event publisher' })).toBeVisible()
-  await page.getByText('How the forecast is calculated').click()
-  await expect(page.getByText('Historical returns', { exact: true })).toBeVisible()
-  await expect(page.getByRole('link', { name: 'Yahoo Finance', exact: true })).toBeVisible()
+  await page.getByText('How the prediction was calculated').click()
+  await expect(page.getByText(/historical returns from/i)).toBeVisible()
+  await expect(
+    page.getByRole('link', { name: 'Yahoo Finance price history', exact: true }),
+  ).toBeVisible()
 })
 
 test('moves between Future and Calendar with the same multi-year or custom forecast', async ({

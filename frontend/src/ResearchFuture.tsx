@@ -3,7 +3,7 @@ import { AlertCircle, Sparkles } from 'lucide-react'
 import { ForecastChart } from './ForecastChart'
 import { EventCard } from './ForecastEvents'
 import { marketPrice } from './PricePlot'
-import { pct } from './types'
+import { PredictionDetails } from './PredictionDetails'
 import { useResource, SourceLink } from './deskCommon'
 import { Busy, ErrorBox } from './ui'
 import { shortDay, type Connection } from './workspace'
@@ -13,15 +13,20 @@ import {
   selectedFuture,
   snapshotPath,
   matchesProjection,
+  matchesActiveForecast,
   projectionPath,
   providerName,
   quarterMarkers,
-  modelEventMarkers,
+  combinedForecastEvents,
   type ForecastSnapshot,
   type ForecastSource,
 } from './forecastSnapshot'
 import {
   dayTime,
+  isLastPriceReference,
+  predictedPrice,
+  predictedChange,
+  predictedPriceText,
   eventPaths,
   type Events,
   type Forecast,
@@ -63,8 +68,15 @@ function ModelOutlook({
     q = f.quarters[quarterIndex]
   return (
     <div className="future-outlook">
-      <h3>{f.symbol} forecast outlook</h3>
-      <p>{f.summary}</p>
+      <h3>
+        {f.symbol} {isLastPriceReference(f) ? 'research outlook' : 'forecast outlook'}
+      </h3>
+      <p>
+        {f.summary.replace(
+          /^The model’s central path ends (?:above|below|close to) the historical baseline\.\s*/,
+          '',
+        )}
+      </p>
       <Citations ids={f.summary_source_ids} sources={f.sources} />
       {!!f.quarters.length && (
         <div className="future-fiscal">
@@ -114,7 +126,7 @@ function ModelOutlook({
         </div>
       )}
       <details className="future-details">
-        <summary>Drivers, sources and assumptions</summary>
+        <summary>Drivers and sources</summary>
         {f.drivers.map((d, i) => (
           <div key={i}>
             <h4>
@@ -124,16 +136,7 @@ function ModelOutlook({
             <Citations ids={d.source_ids} sources={f.sources} />
           </div>
         ))}
-        <p>
-          {f.method}. The shaded range covers the 10th to 90th percentiles of the modeled outcomes.
-        </p>
-        {f.assumptions.length > 0 && (
-          <ul>
-            {f.assumptions.map((a, i) => (
-              <li key={i}>{a}</li>
-            ))}
-          </ul>
-        )}
+
         {f.url && <SourceLink url={f.url}>{f.source} price history</SourceLink>}
       </details>
     </div>
@@ -169,22 +172,14 @@ function ProjectionView({
   const [firstEvents, laterEvents] = eventPaths(symbols, start, end)
   const early = useResource<Events>(archived ? null : firstEvents)
   const later = useResource<Events>(archived ? null : laterEvents)
-  const events = useMemo(() => {
-    const unique = new Map<string, MarketEvent>()
-    for (const event of [
-      ...snapshots.flatMap(quarterMarkers),
-      ...snapshots.flatMap(modelEventMarkers),
-      ...(early.data?.events || []),
-      ...(later.data?.events || []),
-    ]) {
-      const quarter = event.kind === 'fiscal' && event.title.match(/\bQ[1-4]\b/i)?.[0].toUpperCase()
-      const key = quarter
-        ? [event.date, ...event.symbols, quarter].join('|')
-        : [event.date, event.url, event.title].join('|')
-      if (!unique.has(key)) unique.set(key, event)
-    }
-    return [...unique.values()].sort((a, b) => a.date.localeCompare(b.date))
-  }, [snapshots, early.data, later.data])
+  const events = useMemo(
+    () =>
+      combinedForecastEvents(snapshots, [
+        ...(early.data?.events || []),
+        ...(later.data?.events || []),
+      ]),
+    [snapshots, early.data, later.data],
+  )
   const datedQuarters = primaryAI ? quarterMarkers(primaryAI) : []
   const active = events.find((e) => e.id === highlight?.id) || null
   function inspect(e: MarketEvent) {
@@ -264,6 +259,7 @@ function ProjectionView({
           </details>
         )}
       </details>
+      <PredictionDetails series={series} snapshots={snapshots} />
       {primaryAI && (
         <ModelOutlook forecast={primaryAI} quarterIndex={quarter} selectQuarter={focusQuarter} />
       )}
@@ -275,7 +271,12 @@ function ArchivedForecast({ saved, selection }: { saved: ForecastSnapshot; selec
   const series = useMemo(() => [saved], [saved])
   return (
     <details className="future-archive" onToggle={(e) => setOpen(e.currentTarget.open)}>
-      <summary>Saved AI forecast · through {shortDay(saved.points.at(-1)?.date)}</summary>
+      <summary>
+        {isLastPriceReference(saved)
+          ? 'Saved AI research · last-price reference'
+          : 'Saved AI forecast'}{' '}
+        · through {shortDay(saved.points.at(-1)?.date)}
+      </summary>
       {open && (
         <>
           <p>
@@ -300,6 +301,7 @@ function ForecastResult({
   extras,
   changeExtras,
   revision,
+  onPredictionScores,
   projections,
 }: {
   symbol: string
@@ -310,8 +312,10 @@ function ForecastResult({
   extras: string[]
   changeExtras: (symbols: string[]) => void
   revision: number
+  onPredictionScores?: (value: ForecastSnapshot | null) => void
   projections: ReturnType<typeof useResource<Projections>>
 }) {
+  const base = projections.data?.series.find((s) => s.symbol === symbol)
   const {
     forecast: saved,
     generated,
@@ -319,19 +323,33 @@ function ForecastResult({
     loading,
     error,
     generate,
-  } = useSavedForecast(snapshotPath(symbol, selection))
-  const base = projections.data?.series.find((s) => s.symbol === symbol)
-  const [records, setRecords] = useState<Record<string, ForecastSnapshot | null>>({})
-  const remember = useCallback((ticker: string, snapshot: ForecastSnapshot | null) => {
-    setRecords((prev) => (prev[ticker] === snapshot ? prev : { ...prev, [ticker]: snapshot }))
-  }, [])
+    automaticError,
+    canGenerate,
+    eligible,
+  } = useSavedForecast(snapshotPath(symbol, selection), { connection, base, automatic: true })
+  const [records, setRecords] = useState<
+    Record<string, { snapshot: ForecastSnapshot | null; confirmed: boolean }>
+  >({})
+  const remember = useCallback(
+    (ticker: string, snapshot: ForecastSnapshot | null, confirmed: boolean) => {
+      setRecords((prev) =>
+        prev[ticker]?.snapshot === snapshot && prev[ticker]?.confirmed === confirmed
+          ? prev
+          : { ...prev, [ticker]: { snapshot, confirmed } },
+      )
+    },
+    [],
+  )
   const snapshots = useMemo(
     () =>
       (projections.data?.series || []).flatMap((s) => {
-        const candidate = s.symbol === symbol ? saved : records[s.symbol]
-        return matchesProjection(candidate, s) ? [candidate] : []
+        const record = records[s.symbol]
+        const candidate = s.symbol === symbol ? saved : record?.snapshot
+        const confirmed =
+          s.symbol === symbol ? !!generated && generated.id === saved?.id : record?.confirmed
+        return matchesActiveForecast(candidate, s, connection, confirmed) ? [candidate] : []
       }),
-    [projections.data, symbol, saved, records],
+    [projections.data, symbol, saved, generated, records, connection],
   )
   const series = useMemo(
     () =>
@@ -344,18 +362,20 @@ function ForecastResult({
     [projections.data, symbol, extras, snapshots],
   )
   const ai = snapshots.find((s) => s.symbol === symbol)
+  useEffect(() => onPredictionScores?.(ai?.scores ? ai : null), [ai, onPredictionScores])
   const line = ai || base,
     point = line?.points.at(-1),
     anchor = line?.points[0]
+  const reference = isLastPriceReference(line)
+  const needsVerification = canGenerate && !eligible
   const currency = line?.currency
   const priceSources = base?.price_sources?.length
     ? base.price_sources
     : base?.url
       ? [{ source: base.source, url: base.url }]
       : []
-  const change = (price: number) =>
-    anchor && anchor.median > 0 ? (price / anchor.median - 1) * 100 : null
-  const delta = point ? change(point.median) : null
+  const delta =
+    point && anchor ? predictedChange(predictedPrice(point), predictedPrice(anchor)) : null
   const baselineError =
     projections.error ||
     projections.data?.errors.find((e) => e.symbol === symbol)?.error ||
@@ -379,16 +399,25 @@ function ForecastResult({
       <div className="section-head">
         <div>
           <small>
-            {label(selection.preset)} · {ai ? 'AI forecast' : 'Statistical projection'}
+            {label(selection.preset)} ·{' '}
+            {reference ? 'Last-price reference' : ai ? 'AI prediction' : 'Price model prediction'}
           </small>
-          <div className="quote" aria-label="Projected median price">
-            {point ? marketPrice(point.median, currency) : '—'}
+          <div className="quote" aria-label={reference ? 'Reference price' : 'Predicted price'}>
+            {point && anchor
+              ? predictedPriceText(predictedPrice(point), currency, predictedPrice(anchor))
+              : '—'}
           </div>
         </div>
-        {delta != null && (
+        {point && anchor && delta != null && (
           <div className="period-change">
-            <span className={'delta ' + (delta >= 0 ? 'up' : 'down')}>{pct(delta)}</span>
-            <small>Projected change</small>
+            <span
+              className={
+                'delta ' + (predictedPrice(point) >= predictedPrice(anchor) ? 'up' : 'down')
+              }
+            >
+              {delta}
+            </span>
+            <small>{reference ? 'Reference change' : 'Predicted change'}</small>
           </div>
         )}
       </div>
@@ -397,32 +426,30 @@ function ForecastResult({
         <div className="future-generate">
           <button
             className="btn primary"
-            onClick={generate}
-            disabled={busy || !connection?.configured || (loading && !saved)}
+            onClick={canGenerate ? generate : settings}
+            disabled={busy || (canGenerate && loading && !saved)}
           >
             <Sparkles size={14} />
             {busy
               ? 'Generating AI forecast…'
-              : saved
-                ? 'Update AI forecast'
-                : 'Generate AI forecast'}
+              : automaticError || !eligible
+                ? 'Generate now'
+                : saved
+                  ? 'Update AI forecast'
+                  : 'Generate AI forecast'}
           </button>
-          {connection?.configured ? (
-            <small>
-              {providerName(connection.provider)} · {connection.model}
-            </small>
-          ) : (
-            <button className="text-btn" onClick={settings}>
-              Set up a forecast model
-            </button>
-          )}
+          <small>
+            {connection?.configured
+              ? providerName(connection.provider) + ' · ' + connection.model
+              : 'Set up a model in Settings'}
+          </small>
         </div>
         <ForecastComparison
           primary={symbol}
           extras={extras}
           selection={selection}
           change={changeExtras}
-          ready={!!connection?.configured}
+          connection={connection}
           baselines={projections.data?.series || []}
           remember={remember}
         />
@@ -430,18 +457,12 @@ function ForecastResult({
       {point && line && anchor && (
         <div className="future-estimate" aria-label="Projection values">
           <strong>
-            Median for <time dateTime={point.date}>{shortDay(point.date)}</time>
+            {reference ? 'Reference for ' : 'Predicted for '}
+            <time dateTime={point.date}>{shortDay(point.date)}</time>
             {currency && ' · ' + currency}
           </strong>
           <span>
-            10th–90th percentile{' '}
-            <b>
-              {marketPrice(point.low, currency)} to {marketPrice(point.high, currency)}
-            </b>{' '}
-            ({pct(change(point.low))} to {pct(change(point.high))})
-          </span>
-          <span>
-            {quoteAnchor(line)} {marketPrice(anchor.median, currency)} ·{' '}
+            {quoteAnchor(line)} {marketPrice(predictedPrice(anchor), currency)} ·{' '}
             <time dateTime={line.anchor_time || line.as_of}>
               {line.anchor_kind === 'intraday' && line.anchor_time
                 ? new Date(line.anchor_time).toLocaleString(undefined, {
@@ -467,9 +488,18 @@ function ForecastResult({
           </span>
         </div>
       )}
-      {connection?.generation_detail && !connection.verified && (
+      {automaticError && (
+        <p className="future-status" role="status">
+          {automaticError}{' '}
+          <button className="text-btn" onClick={settings}>
+            AI settings
+          </button>
+        </p>
+      )}
+      {needsVerification && !automaticError && (
         <p className="future-status">
-          {connection.generation_detail}{' '}
+          {connection?.generation_detail ||
+            'Verify your model to generate predictions automatically.'}{' '}
           <button className="text-btn" onClick={settings}>
             AI settings
           </button>
@@ -502,19 +532,22 @@ function ForecastResult({
                 'Using cached price observations from ' + shortDay(base.as_of) + '.'}
             </p>
           )}
-          {ai ? (
+          {(reference || !ai) && (
             <small className="future-saved">
-              Generated{' '}
+              {reference
+                ? line.model_inputs?.reference_reason ||
+                  'The last observed price is carried forward for this period.'
+                : 'Based on ' + symbol + '’s observed prices.'}
+            </small>
+          )}
+          {ai && (
+            <small className="future-saved">
+              {reference ? 'AI research generated' : 'Generated'}{' '}
               {new Date(ai.created).toLocaleString(undefined, {
                 dateStyle: 'medium',
                 timeStyle: 'short',
               })}{' '}
               with {providerName(ai.provider)} · {ai.model}.
-            </small>
-          ) : (
-            <small className="future-saved">
-              Projected from observed prices and volatility. Generate an AI forecast to factor in
-              published news and estimates.
             </small>
           )}
           <ProjectionView
@@ -545,6 +578,7 @@ export function ResearchFuture({
   connection,
   settings,
   revision,
+  onPredictionScores,
 }: {
   symbol: string
   query: string
@@ -552,6 +586,7 @@ export function ResearchFuture({
   connection: Connection | null
   settings: () => void
   revision: number
+  onPredictionScores?: (value: ForecastSnapshot | null) => void
 }) {
   const extras = useMemo(() => extraSymbols(symbol, query), [symbol, query])
   const selection = selectedFuture(query),
@@ -652,6 +687,7 @@ export function ResearchFuture({
       connection={connection}
       settings={settings}
       revision={revision}
+      onPredictionScores={onPredictionScores}
       projections={projections}
       controls={controls}
     />

@@ -85,6 +85,12 @@ jobs:
         env:
           STOCKREPLAY_TEST_OPENAI_KEY: ${{ secrets.STOCKREPLAY_TEST_OPENAI_KEY }}
         run: .venv/bin/python -m pytest -q -rs tests/test_terminal.py -k live_openai_generation
+      - name: Verify ticker lookup predictions using available website keys
+        if: github.event_name == 'workflow_dispatch' && inputs.live_providers && matrix.runner == 'macos-15'
+        env:
+          STOCKREPLAY_TEST_OPENAI_KEY: ${{ secrets.STOCKREPLAY_TEST_OPENAI_KEY }}
+          STOCKREPLAY_TEST_OLLAMA_CLOUD_KEY: ${{ secrets.STOCKREPLAY_TEST_OLLAMA_CLOUD_KEY }}
+        run: .venv/bin/python -m pytest -q -rs tests/test_hosted_auto_forecast.py
       - name: Verify Ollama website search and hosted generation when a dedicated key is available
         if: github.event_name == 'workflow_dispatch' && inputs.live_providers && matrix.runner == 'macos-15'
         env:
@@ -104,6 +110,17 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - name: Install StockReplay backend
         run: uv sync --frozen
+      - uses: actions/setup-node@v4
+        if: inputs.live_forecast
+        with:
+          node-version: "22"
+      - name: Build and install the browser for a real ticker lookup
+        if: inputs.live_forecast
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+          PLAYWRIGHT_BROWSERS_PATH="$PWD/../.local/browsers" ./node_modules/.bin/playwright install chromium
       - name: Run the free model against live public evidence
         shell: bash
         env:
@@ -135,5 +152,5 @@ jobs:
             .venv/bin/python -m pytest -q -s tests/test_live_ollama.py tests/test_local_ai.py::test_real_local_model_uses_the_generation_paths
           fi
           if [ "$VERIFY_FORECAST" = true ]; then
-            .venv/bin/python -m pytest -q -s tests/test_ai_forecasts.py::test_live_local_provider_forecast
+            STOCKREPLAY_LIVE_TESTS=1 npm --prefix frontend run e2e -- live-auto-prediction.spec.ts
           fi

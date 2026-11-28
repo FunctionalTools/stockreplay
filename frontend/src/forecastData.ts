@@ -1,4 +1,5 @@
 import { tickerPattern } from './workspace'
+import { marketPrice } from './PricePlot'
 import { validDay } from './priceRanges'
 
 export const horizons = {
@@ -17,6 +18,49 @@ export const horizons = {
   custom: 'Custom',
 } as const
 export type Horizon = keyof typeof horizons
+export type ForecastPoint = {
+  date: string
+  prediction?: number
+  median: number
+  low?: number
+  high?: number
+  baseline?: number
+}
+export const predictedPrice = (point: ForecastPoint) => point.prediction ?? point.median
+export function predictedPriceText(
+  value: number,
+  currency: string | null | undefined,
+  basis: number,
+) {
+  const quoted = marketPrice(value, currency)
+  if (value === basis || quoted !== marketPrice(basis, currency)) return quoted
+  const decimals = Math.min(12, Math.max(2, Math.ceil(-Math.log10(Math.abs(value - basis))) + 1))
+  return value.toLocaleString(undefined, {
+    ...(currency && /^[A-Z]{3}$/.test(currency) ? { style: 'currency', currency } : {}),
+    minimumFractionDigits: 2,
+    maximumFractionDigits: decimals,
+  })
+}
+export function predictedChange(price: number, basis: number) {
+  if (!(basis > 0)) return '—'
+  const percent = (price / basis - 1) * 100
+  const precision =
+    percent !== 0 && Math.abs(percent) < 0.01
+      ? { maximumSignificantDigits: 2 }
+      : { minimumFractionDigits: 2, maximumFractionDigits: 2 }
+  return (
+    new Intl.NumberFormat(undefined, { signDisplay: 'exceptZero', ...precision }).format(percent) +
+    '%'
+  )
+}
+type HistoricalCheck = {
+  model_mae_pct?: number | null
+  flat_mae_pct?: number | null
+  tested_sessions: number
+  inside_band_sessions: number
+  observed_coverage_pct: number | null
+}
+
 export type Forecast = {
   symbol: string
   currency: string | null
@@ -27,28 +71,47 @@ export type Forecast = {
   fetched: string | null
   as_of: string
   history: { date: string; price: number }[]
-  points: { date: string; low: number; median: number; high: number; baseline?: number }[]
+  points: ForecastPoint[]
   coverage: { start: string; end: string; observations: number; returns: number }
+  model_inputs?: {
+    kind?: 'last_price_reference' | 'conditional_history'
+    reference_reason?: string
+    independent_horizon_matches?: number
+    matched_horizon_sessions?: number
+    max_analogue_sessions?: number
+    momentum_5d_pct: number | null
+    momentum_21d_pct: number | null
+    momentum_63d_pct: number | null
+    drawdown_63d_pct: number | null
+    volatility_21d_pct: number | null
+    regime: string
+  }
   model_version?: string
   data_digest?: string
   requested_start?: string | null
   requested_end?: string | null
   expected_session?: string
   horizon_origin?: string
+  projected_sessions?: number
   anchor_kind?: 'confirmed_close' | 'intraday'
   anchor_time?: string | null
   data_note?: string | null
   price_sources?: { source: string; url: string | null }[]
-  validation_1d?: {
-    tested_sessions: number
-    inside_band_sessions: number
-    observed_coverage_pct: number | null
-  }
-  annualized_volatility_pct: number
+  validation_1d?: HistoricalCheck
+  validation_21d?: HistoricalCheck
+  validation_252d?: HistoricalCheck
+  annualized_volatility_pct: number | null
   method: string
   assumptions: string[]
   stale: boolean
 }
+export function isLastPriceReference(series?: Forecast | null) {
+  return (
+    series?.model_inputs?.kind === 'last_price_reference' ||
+    series?.method === 'Last-price reference'
+  )
+}
+
 export type Projections = {
   horizon: Horizon
   seed: number

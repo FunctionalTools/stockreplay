@@ -294,7 +294,7 @@ def register(app, db):
 
     @r.get("/ai")
     def active_ai():
-        return t.ai.active().status()
+        return t.ai.status()
 
     @r.patch("/ai")
     def select_ai(choice: ProviderChoice):
@@ -322,7 +322,7 @@ def register(app, db):
 
     @r.delete("/ai/ollama-cloud")
     def forget_cloud():
-        return t.ai.ollama_cloud.forget()
+        return t.ai.forget(t.ai.ollama_cloud)
 
     @r.get("/ai/ollama-cloud/models")
     def hosted_ollama_models():
@@ -586,7 +586,7 @@ def register(app, db):
 
     @r.delete("/openai")
     def key_forget():
-        return t.openai.forget()
+        return t.ai.forget(t.openai)
 
     @r.post("/openai/test")
     def key_test():

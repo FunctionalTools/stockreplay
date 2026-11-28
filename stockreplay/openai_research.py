@@ -1,6 +1,7 @@
 """OpenAI Responses gateway for explicit, user-initiated actions."""
 
 import hashlib
+import hmac
 import json
 import re
 from decimal import Decimal
@@ -244,6 +245,7 @@ class KeyConnection:
         self.lock = Lock()
         self.session_key = None
         self.verified = None
+        self.generation_detail = None
         self.revision = 0
         self.account = hashlib.sha256(str(db.path.resolve()).encode()).hexdigest()
         with db.connect() as c:
@@ -252,6 +254,11 @@ class KeyConnection:
             )
             c.execute(
                 f"insert or ignore into {self.settings_table} values(1,?,0)", (self.default_model,)
+            )
+            c.execute(
+                """create table if not exists generation_receipts(
+                   provider text primary key, model text not null, credential_tag text not null,
+                   verified_at text, detail text)"""
             )
 
     def config(self):
@@ -267,16 +274,73 @@ class KeyConnection:
 
     def apply_checks(self, checks):
         self.verified = checks.get("verified_at")
+        self.generation_detail = checks.get("generation_detail")
 
     def connection_details(self):
-        return {}
+        return {"generation_detail": self.generation_detail} if self.generation_detail else {}
+
+    def credential_tag(self, key, model):
+        # One-way installation-, provider- and model-specific verifier. SQLite never
+        # contains the credential. Also detect keys replaced directly in login Keychain.
+        context = "|".join((self.account, self.provider, model)).encode()
+        return hmac.digest(key.encode(), context, "sha256").hex()
+
+    def save_receipt(self, c, key, model, saved, stamp, detail):
+        if self.provider == "ollama_search":
+            return
+        if not saved:
+            c.execute("delete from generation_receipts where provider=?", (self.provider,))
+            return
+        c.execute(
+            "insert or replace into generation_receipts values(?,?,?,?,?)",
+            (self.provider, model, self.credential_tag(key, model), stamp, detail),
+        )
+
+    def receipt(self, model):
+        with self.db.connect() as c:
+            return c.execute(
+                "select * from generation_receipts where provider=? and model=?",
+                (self.provider, model),
+            ).fetchone()
+
+    def require_verified_generation(self, key, model):
+        with self.lock:
+            selected, saved = self.config()
+            if self.generation_detail:
+                raise HTTPException(409, self.generation_detail)
+            if selected == model:
+                if self.verified and self.session_key == key:
+                    return
+                record = self.receipt(model) if saved else None
+                if record:
+                    if hmac.compare_digest(
+                        record["credential_tag"], self.credential_tag(key, model)
+                    ):
+                        if record["detail"]:
+                            raise HTTPException(409, record["detail"])
+                        if record["verified_at"]:
+                            return
+                    else:
+                        with self.db.connect() as c:
+                            c.execute(
+                                "delete from generation_receipts where provider=? and credential_tag=?",
+                                (self.provider, record["credential_tag"]),
+                            )
+        raise HTTPException(
+            409, "Test the selected model in Settings to enable automatic predictions."
+        )
 
     def status(self):
         with self.lock:
             model, saved = self.config()
+            record = self.receipt(model) if saved else None
+            detail = self.generation_detail or (record["detail"] if record else None)
             return {
                 "provider": self.provider,
                 **self.connection_details(),
+                **({"generation_detail": detail} if detail else {}),
+                "generation_ready": bool(self.verified or (record and record["verified_at"]))
+                and not detail,
                 "configured": bool(self.session_key or saved),
                 "verified": bool(self.verified),
                 "verified_at": self.verified,
@@ -356,6 +420,14 @@ class KeyConnection:
                     f"update {self.settings_table} set model=?,remember=? where id=1",
                     (settings.model, int(settings.remember)),
                 )
+                self.save_receipt(
+                    c,
+                    key,
+                    settings.model,
+                    settings.remember,
+                    checks.get("verified_at"),
+                    checks.get("generation_detail"),
+                )
             self.session_key = key
             self.apply_checks(checks)
             self.revision += 1
@@ -373,6 +445,7 @@ class KeyConnection:
                     ) from None
             with self.db.connect() as c:
                 c.execute(f"update {self.settings_table} set remember=0 where id=1")
+                c.execute("delete from generation_receipts where provider=?", (self.provider,))
             self.session_key = None
             self.apply_checks({})
             self.revision += 1
@@ -470,15 +543,18 @@ class OpenAIResearch(KeyConnection):
         if (
             method == "POST"
             and payload
-            and (status in (401, 403, 404) or code == "insufficient_quota")
+            and (
+                status in (401, 403, 404)
+                or code in ("insufficient_quota", "billing_hard_limit_reached")
+            )
         ):
-            self.mark_verified(key, payload.get("model"), None)
+            self.mark_verified(key, payload.get("model"), None, detail)
         if (
             status == 413
             or code == "context_length_exceeded"
             or (
                 status == 429
-                and code != "insufficient_quota"
+                and code not in ("insufficient_quota", "billing_hard_limit_reached")
                 and "request too large" in message.lower()
             )
         ):
@@ -493,10 +569,15 @@ class OpenAIResearch(KeyConnection):
             )
         raise HTTPException(status if 400 <= status < 500 else 502, detail)
 
-    def mark_verified(self, key, model, stamp):
+    def mark_verified(self, key, model, stamp, detail=None):
         with self.lock:
             if self.matches_current(key, model):
                 self.verified = stamp
+                self.generation_detail = detail
+                _, saved = self.config()
+                if saved:
+                    with self.db.connect() as c:
+                        self.save_receipt(c, key, model, True, stamp, detail)
 
     def structured(self, key, model, name, schema, instructions, inputs, budget=3500):
         for attempt in range(2):
@@ -582,6 +663,16 @@ class OpenAIResearch(KeyConnection):
         with self.lock:
             if self.revision == revision and self.config()[0] == model:
                 self.apply_checks(checks)
+                if self.config()[1]:
+                    with self.db.connect() as c:
+                        self.save_receipt(
+                            c,
+                            key,
+                            model,
+                            True,
+                            checks.get("verified_at"),
+                            checks.get("generation_detail"),
+                        )
         return self.status()
 
     def models(self, discover=False, candidate=None):

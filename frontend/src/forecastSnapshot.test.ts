@@ -1,7 +1,9 @@
 import { expect, it } from 'vitest'
+import type { Connection } from './workspace'
 import {
   fromFutureFocus,
   matchesProjection,
+  matchesActiveForecast,
   projectionPath,
   futureHref,
   modelEventMarkers,
@@ -121,6 +123,20 @@ it('uses only saved AI paths anchored to the same price, target session and obse
     false,
   )
   expect(matchesProjection(quote, quote)).toBe(true)
+  const connection = {
+    configured: true,
+    provider: 'openai',
+    model: 'selected-model',
+    generation_detail: 'Earlier generation limit',
+  } as Connection
+  const saved = { ...base, provider: 'openai', model: connection.model! }
+  expect(matchesActiveForecast(saved, base, connection)).toBe(false)
+  expect(matchesActiveForecast(saved, base, connection, true)).toBe(true)
+  expect(matchesActiveForecast({ ...saved, model: 'previous-model' }, base, connection, true)).toBe(
+    false,
+  )
+  expect(matchesActiveForecast(saved, base, { ...connection, configured: false }, true)).toBe(false)
+
   expect(
     projectionPath(['SNDK', 'AMD'], { preset: 'custom', start: '2026-12-01', end: '2026-12-15' }),
   ).toBe(

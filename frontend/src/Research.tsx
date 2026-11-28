@@ -14,6 +14,7 @@ import { useResource, SourceLink } from './deskCommon'
 import { Busy, ErrorBox, Modal } from './ui'
 import { ResearchRange } from './ResearchRange'
 import { calendarHref } from './forecastData'
+import { providerName, type ForecastSnapshot } from './forecastSnapshot'
 import { ChartDesk } from './ChartDesk'
 import { PublicSourceSearch, type PublicSearch } from './PublicSourceSearch'
 import { ScoreFactors } from './ScoreFactors'
@@ -107,7 +108,15 @@ function Distribution({ votes }: { votes: Record<string, number> }) {
     </div>
   )
 }
-export function Gauge({ score, risk }: { score: number | undefined; risk?: boolean }) {
+export function Gauge({
+  score,
+  risk,
+  unresolved,
+}: {
+  score: number | undefined
+  risk?: boolean
+  unresolved?: boolean
+}) {
   const color = risk ? 'var(--risk)' : 'var(--accent)'
   return (
     <div className="gauge">
@@ -119,7 +128,7 @@ export function Gauge({ score, risk }: { score: number | undefined; risk?: boole
           strokeWidth="8"
           strokeLinecap="round"
         />
-        {score != null && (
+        {!unresolved && score != null && (
           <path
             d="M9 53a41 41 0 0 1 82 0"
             fill="none"
@@ -131,9 +140,11 @@ export function Gauge({ score, risk }: { score: number | undefined; risk?: boole
           />
         )}
       </svg>
-      <span className="gauge-value">{score ?? '—'}</span>
+      <span className="gauge-value">{unresolved ? '—' : (score ?? '—')}</span>
       <strong>{risk ? 'Risk score' : 'Buy score'}</strong>
-      <small>{risk ? 'Higher = more risk' : 'Higher = stronger case'}</small>
+      <small>
+        {unresolved ? 'Unresolved' : risk ? 'Higher = more risk' : 'Higher = stronger case'}
+      </small>
     </div>
   )
 }
@@ -409,6 +420,8 @@ export function Research({
     [layoutRevision, refreshLayout] = useState(0),
     [selected, setSelected] = useState(''),
     [adv, setAdv] = useState(advanced)
+  const [prediction, setPrediction] = useState<ForecastSnapshot | null>(null)
+  const chartScores = prediction?.symbol === symbol ? prediction.scores : undefined
   const o = history.data?.find((row) => row.id === selected) || history.data?.[0] || null,
     b = eb.data
   const focus = useRef<HTMLElement | null>(null)
@@ -460,6 +473,9 @@ export function Research({
     try {
       const a = await api<Opinion>('/desk/recommend/' + encodeURIComponent(symbol), 'POST')
       setSelected(a.id)
+      window.dispatchEvent(
+        new CustomEvent('stockreplay:forecast-inputs-changed', { detail: symbol }),
+      )
       history.reload()
     } catch (e) {
       fail(errorText(e))
@@ -519,6 +535,7 @@ export function Research({
           revision={revision}
           query={query}
           changeChart={changeChart}
+          onPredictionScores={setPrediction}
           connection={connection}
           settings={settings}
         />
@@ -529,10 +546,28 @@ export function Research({
             </h2>
           </div>
           <div className="gauges">
-            <Gauge score={o?.buy_score} />
-            <Gauge score={o?.risk_score} risk />
+            <Gauge
+              score={chartScores?.buy_score ?? o?.buy_score}
+              unresolved={chartScores?.buy_status === 'unresolved'}
+            />
+            <Gauge
+              score={chartScores?.risk_score ?? o?.risk_score}
+              unresolved={chartScores?.risk_status === 'unresolved'}
+              risk
+            />
           </div>
-          {o?.buy_score != null ? (
+          {chartScores ? (
+            <p>
+              {chartScores.buy_status === 'unresolved' || chartScores.risk_status === 'unresolved'
+                ? 'Only scores supported by the cited evidence influenced this prediction.'
+                : 'Scores used for this prediction'}
+              <br />
+              <small>
+                {providerName(chartScores.provider)} · {chartScores.model} ·{' '}
+                {shortDay(chartScores.as_of)}
+              </small>
+            </p>
+          ) : o?.buy_score != null ? (
             <p>
               {o.confidence} confidence · {o.horizon}
               <br />
@@ -547,7 +582,9 @@ export function Research({
             </p>
           )}
           {connection?.provider === 'ollama_cloud' && connection.generation_detail && (
-            <p role="status">{connection.generation_detail} <a href="#/settings">AI settings</a></p>
+            <p role="status">
+              {connection.generation_detail} <a href="#/settings">AI settings</a>
+            </p>
           )}
           {busy && connection?.provider === 'ollama' && (
             <p role="status">
@@ -588,7 +625,11 @@ export function Research({
       {o && (
         <section className="panel explanation">
           <div className="section-head">
-            <h2>Why these scores?</h2>
+            <h2>
+              {chartScores && chartScores.report_id !== o.id
+                ? 'Saved research assessment'
+                : 'Why these scores?'}
+            </h2>
             {(history.data?.length || 0) > 1 && (
               <select
                 aria-label="Saved assessment"

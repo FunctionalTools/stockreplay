@@ -83,19 +83,18 @@ class OllamaCloudResearch(OpenAIResearch):
         self.generation_detail = checks.get("generation_detail")
 
     def record_outcome(self, key, model, detail):
+        if model is not None:
+            self.mark_verified(key, model, None if detail else now(), detail)
+            return
         with self.lock:
             if not self.matches_current(key, model):
                 return
             stamp = None if detail else now()
-            if model is not None:
-                self.verified = stamp
-                self.generation_detail = detail
-            else:
-                self.web_check = {
-                    "verified": bool(stamp),
-                    "verified_at": stamp,
-                    **({"detail": detail} if detail else {}),
-                }
+            self.web_check = {
+                "verified": bool(stamp),
+                "verified_at": stamp,
+                **({"detail": detail} if detail else {}),
+            }
 
     @contextmanager
     def observe(self, key, model=None):

@@ -13,6 +13,7 @@ import {
 } from './priceRanges'
 import { shortDay, type Intent, type Connection } from './workspace'
 import { ResearchFuture, futureHref } from './ResearchFuture'
+import type { ForecastSnapshot } from './forecastSnapshot'
 import { Busy, ErrorBox } from './ui'
 import { pct } from './types'
 import './researchRange.css'
@@ -39,6 +40,7 @@ export function ResearchRange({
   changeChart,
   connection,
   settings,
+  onPredictionScores,
 }: {
   symbol: string
   intent: Intent
@@ -47,8 +49,13 @@ export function ResearchRange({
   changeChart: (href: string) => void
   connection: Connection | null
   settings: () => void
+  onPredictionScores?: (value: ForecastSnapshot | null) => void
 }) {
-  const future = new URLSearchParams(query).get('view') === 'future' || intent.kind === 'future'
+  const view = new URLSearchParams(query).get('view')
+  const future = view === 'future' || intent.kind === 'future' || (!intent.kind && view !== 'past')
+  useEffect(() => {
+    if (!future) onPredictionScores?.(null)
+  }, [future, onPredictionScores])
   const [selection, select] = useState<Selection>(() => fromFocus(intent.kind) || { preset: '6mo' })
   const [editing, setEditing] = useState(false)
   const [start, setStart] = useState(selection.start || ''),
@@ -118,6 +125,7 @@ export function ResearchRange({
       </div>
       {future ? (
         <ResearchFuture
+          onPredictionScores={onPredictionScores}
           symbol={symbol}
           query={query}
           changeChart={changeChart}

@@ -3,7 +3,16 @@ import { ChevronLeft, ChevronRight, Pause, Play, X } from 'lucide-react'
 import { EventCard } from './ForecastEvents'
 import { marketPrice } from './PricePlot'
 import { shortDay } from './workspace'
-import { dayTime, latestSharedClose, type MarketEvent, type Forecast } from './forecastData'
+import {
+  dayTime,
+  latestSharedClose,
+  isLastPriceReference,
+  predictedChange,
+  predictedPrice,
+  predictedPriceText,
+  type MarketEvent,
+  type Forecast,
+} from './forecastData'
 
 export const lineColors = [
   'var(--accent)',
@@ -28,77 +37,49 @@ function markerLabel(event: MarketEvent) {
   if (event.kind === 'legislative') return 'Bill'
   return 'Co.'
 }
-type Mark = { date: string; value: number }
 function plotModel(
   series: Forecast[],
   events: MarketEvent[],
   symbols: string[],
   W: number,
   B: number,
-  includeHistory: boolean,
   forwardStart?: string,
   civilEnd?: string,
 ) {
   const anchor = latestSharedClose(series)
   if (!anchor) return null
   const compare = series.length > 1
-  const allDates = new Set<string>(),
-    lines = series.map((s) => {
-      const basis = s.history.find((p) => p.date === anchor)!.price
-      const transform = (v: number) => (compare ? (v / basis - 1) * 100 : v)
-      const history = s.history
-        .filter((p) => includeHistory || p.date >= anchor)
-        .map((p) => ({ date: p.date, value: transform(p.price) }))
-      const points = s.points
-        .filter(
-          (p) => !forwardStart || p.date >= forwardStart || (!includeHistory && p.date === s.as_of),
-        )
-        .map((p) => ({
-          baseline: p.baseline == null ? null : transform(p.baseline),
-          date: p.date,
-          low: transform(p.low),
-          value: transform(p.median),
-          high: transform(p.high),
-        }))
-      for (const p of [...history, ...points]) allDates.add(p.date)
-      return { s, history, points, basis, color: lineColors[symbols.indexOf(s.symbol)] }
-    })
+  const allDates = new Set<string>()
+  const lines = series.map((s) => {
+    const basis = s.history.find((p) => p.date === anchor)!.price
+    const points = s.points
+      .filter((p) => !forwardStart || p.date === s.as_of || p.date >= forwardStart)
+      .map((p) => {
+        const price = predictedPrice(p)
+        return { date: p.date, price, value: compare ? (price / basis - 1) * 100 : price }
+      })
+    for (const p of points) allDates.add(p.date)
+    return { s, basis, points, color: lineColors[symbols.indexOf(s.symbol)] }
+  })
   const priceDays = [...allDates].sort()
+  if (!priceDays.length) return null
   const first = priceDays[0],
-    last =
-      civilEnd && civilEnd > priceDays[priceDays.length - 1]
-        ? civilEnd
-        : priceDays[priceDays.length - 1]
+    lastPrice = priceDays[priceDays.length - 1]
+  const last = civilEnd && civilEnd > lastPrice ? civilEnd : lastPrice
   allDates.add(last)
   for (const e of events) if (e.date >= first && e.date <= last) allDates.add(e.date)
   const dates = [...allDates].sort()
-  const low = Math.min(
-    ...lines.map((l) =>
-      Math.min(
-        ...l.history.map((p) => p.value),
-        ...l.points.map((p) => Math.min(p.low, p.baseline ?? p.low)),
-      ),
-    ),
-  )
-  const high = Math.max(
-    ...lines.map((l) =>
-      Math.max(
-        ...l.history.map((p) => p.value),
-        ...l.points.map((p) => Math.max(p.high, p.baseline ?? p.high)),
-      ),
-    ),
-  )
-  const padding = (high - low) * 0.09 || Math.max(Math.abs(low) * 0.005, 0.001)
+  const low = Math.min(...lines.map((l) => Math.min(...l.points.map((p) => p.value))))
+  const high = Math.max(...lines.map((l) => Math.max(...l.points.map((p) => p.value))))
+  // A few cents of movement in a flat instrument should occupy only a small
+  // part of the plot. Retain the observed scale when other prices move sharply.
+  const minimumSpan = compare ? 0.5 : Math.abs(lines[0].basis) * 0.005
+  const padding = Math.max((high - low) * 0.15, (minimumSpan - (high - low)) / 2, 1e-10)
   const bottom = compare ? low - padding : Math.max(0, low - padding),
     top = high + padding
-  const split = includeHistory ? L + (W - L - R) * 0.31 : L,
-    start = dayTime(first),
-    end = dayTime(last),
-    base = dayTime(anchor)
-  const x = (d: string) =>
-    d <= anchor
-      ? L + ((split - L) * (dayTime(d) - start)) / Math.max(base - start, 1)
-      : split + ((W - R - split) * (dayTime(d) - base)) / Math.max(end - base, 1)
+  const start = dayTime(first),
+    duration = Math.max(1, dayTime(last) - start)
+  const x = (d: string) => L + ((W - L - R) * (dayTime(d) - start)) / duration
   const nearestDate = (px: number) => {
     let lo = 0,
       hi = dates.length - 1
@@ -112,27 +93,12 @@ function plotModel(
     ]
   }
   const y = (v: number) => B - ((B - T) * (v - bottom)) / (top - bottom)
-  const path = (marks: Mark[]) =>
-    marks
+  const paths = lines.map((line) => ({
+    ...line,
+    path: line.points
       .map((p, i) => (i ? 'L' : 'M') + x(p.date).toFixed(2) + ',' + y(p.value).toFixed(2))
-      .join(' ')
-  const paths = lines.map((line) => {
-    const lows = line.points.map((p) => ({ ...p, value: p.low })),
-      highs = line.points.map((p) => ({ ...p, value: p.high }))
-    return {
-      ...line,
-      historical: path(line.history),
-      median: path(line.points),
-      baseline: path(
-        line.points.flatMap((p) =>
-          p.baseline == null ? [] : [{ date: p.date, value: p.baseline }],
-        ),
-      ),
-      low: path(lows),
-      high: path(highs),
-      band: path([...highs, ...lows.reverse()]) + ' Z',
-    }
-  })
+      .join(' '),
+  }))
   const markers: { x: number; events: MarketEvent[] }[] = []
   for (const e of [...events].sort((a, b) => a.date.localeCompare(b.date))) {
     if (e.date < first || e.date > last) continue
@@ -149,7 +115,7 @@ function plotModel(
     anchor,
     x,
     y,
-    split,
+    lastPrice,
     bottom,
     top,
     compare,
@@ -182,13 +148,11 @@ export function ForecastChart({
 }) {
   const host = useRef<HTMLDivElement>(null),
     [W, setWidth] = useState(920)
-  const [showPast, setShowPast] = useState(false)
-  const includeHistory = !compact || showPast
   const H = compact ? 211 : 266,
     B = compact ? 158 : 207
   const model = useMemo(
-    () => plotModel(series, events, symbols, W, B, includeHistory, forwardStart, civilEnd),
-    [series, events, symbols, W, B, includeHistory, forwardStart, civilEnd],
+    () => plotModel(series, events, symbols, W, B, forwardStart, civilEnd),
+    [series, events, symbols, W, B, forwardStart, civilEnd],
   )
   const available = !!model
   useEffect(() => {
@@ -223,8 +187,20 @@ export function ForecastChart({
         The selected tickers have no shared observed close. View one ticker at a time.
       </p>
     )
-  const { lines, first, last, anchor, x, y, split, bottom, top, compare, markers, nearestDate } =
-    model
+  const {
+    lines,
+    first,
+    last,
+    anchor,
+    x,
+    y,
+    lastPrice,
+    bottom,
+    top,
+    compare,
+    markers,
+    nearestDate,
+  } = model
   const position = date >= first && date <= last ? date : dates[index]
   const openEvents = (items: MarketEvent[]) => {
     play(false)
@@ -237,29 +213,27 @@ export function ForecastChart({
     choose(d)
   }
   const changeIndex = (v: number) => setDay(dates[Math.max(0, Math.min(dates.length - 1, v))])
-  const axis = (v: number) =>
-    compare
-      ? v.toFixed(1) + '%'
-      : new Intl.NumberFormat(undefined, {
-          notation: Math.abs(v) >= 10000 ? 'compact' : 'standard',
-          maximumFractionDigits: Math.abs(v) < 1 ? 4 : 2,
-        }).format(v)
+  const tickPrecision = Math.min(
+    10,
+    Math.max(compare ? 1 : 2, Math.ceil(-Math.log10((top - bottom) / 4))),
+  )
+  const axis = (value: number) => {
+    const rounded = Number(value.toFixed(tickPrecision)) || 0
+    return (
+      rounded.toLocaleString(undefined, { maximumFractionDigits: tickPrecision }) +
+      (compare ? '%' : '')
+    )
+  }
   const hasIntraday = series.some((s) => s.anchor_kind === 'intraday')
   const sharedQuote = series.some((s) => s.anchor_kind === 'intraday' && s.as_of === anchor)
-  const lastLabel = includeHistory
-    ? last
-    : lines
-        .map((l) => l.points.at(-1)?.date || l.s.as_of)
-        .sort()
-        .at(-1)!
   const inspected = series[0]
-  const ai = aiSymbols.includes(inspected.symbol)
-  const medianLabel =
-    compact && (!compare || !aiSymbols.length)
-      ? ai
-        ? 'AI median'
-        : 'Statistical median'
-      : 'Median forecast'
+  const reference = isLastPriceReference(inspected)
+  const allReferences = series.every(isLastPriceReference)
+  const mixed = !allReferences && series.some(isLastPriceReference)
+  const priceLabel = allReferences ? 'Reference price' : mixed ? 'Price' : 'Predicted price'
+  const changeLabel = allReferences ? 'Reference change' : mixed ? 'Change' : 'Predicted change'
+  const firstPoint = inspected.points[0],
+    endPoint = inspected.points.at(-1)!
   const observed = inspected.history.find((p) => p.date === position)
   const projected =
     position > inspected.as_of ? inspected.points.find((p) => p.date === position) : undefined
@@ -277,12 +251,27 @@ export function ForecastChart({
               {lines.map((l) => (
                 <span key={l.s.symbol}>
                   <i style={{ background: l.color }} />
-                  {l.s.symbol} · {aiSymbols.includes(l.s.symbol) ? 'AI' : 'statistical'}
+                  {l.s.symbol} ·{' '}
+                  {isLastPriceReference(l.s)
+                    ? 'last-price reference'
+                    : aiSymbols.includes(l.s.symbol)
+                      ? 'AI'
+                      : 'price model'}
                 </span>
               ))}
             </div>
           )}
-          <h2>{compare ? 'Projected returns' : 'Price projection'}</h2>
+          <h2>
+            {compare
+              ? allReferences
+                ? 'Last-price references'
+                : mixed
+                  ? 'Price changes'
+                  : 'Projected returns'
+              : reference
+                ? 'Last-price reference'
+                : 'Price projection'}
+          </h2>
           <small>
             {compare
               ? (sharedQuote
@@ -294,45 +283,6 @@ export function ForecastChart({
                 (series[0].anchor_kind === 'intraday' ? ' · Observed quote ' : ' · Last close ') +
                 shortDay(series[0].as_of)}
           </small>
-        </div>
-        <div className="forecast-key">
-          <span>
-            <i />
-            {hasIntraday ? 'Observed price' : 'Observed close'}
-          </span>
-          <span>
-            <i />
-            {medianLabel}
-          </span>
-          <span>
-            <i />
-            10th–90th percentile
-          </span>
-          {compact && lines.some((l) => l.baseline) && (
-            <span className="fc-baseline-key">
-              <i />
-              Statistical baseline
-            </span>
-          )}
-          {compact && (
-            <label className="fc-history-toggle">
-              <input
-                type="checkbox"
-                checked={showPast}
-                onChange={(e) => {
-                  setShowPast(e.target.checked)
-                  setPopup(null)
-                }}
-              />
-              Show past prices
-            </label>
-          )}
-          {compact && markers.length > 0 && (
-            <span className="fc-event-key">
-              <i />
-              Event or expectation
-            </span>
-          )}
         </div>
       </div>
       <div
@@ -347,18 +297,14 @@ export function ForecastChart({
             role="img"
             aria-label={
               series.map((s) => s.symbol).join(' and ') +
-              (includeHistory ? ' observed history' : ' observed anchor') +
-              ', median forecast, upper and lower simulated prices'
+              (allReferences
+                ? ' last-price reference'
+                : mixed
+                  ? ' price comparison'
+                  : ' price prediction') +
+              ' by trading session'
             }
           >
-            <rect
-              x={split}
-              y={T}
-              width={W - R - split}
-              height={B - T}
-              fill={compact ? 'var(--accent-soft)' : 'var(--soft)'}
-              opacity={compact ? '.5' : '.55'}
-            />
             {[0, 1, 2, 3, 4].map((i) => {
               const value = bottom + ((top - bottom) * i) / 4
               return (
@@ -376,80 +322,54 @@ export function ForecastChart({
                 stroke={l.color}
                 fill="none"
                 data-symbol={l.s.symbol}
-                data-forecast-model={aiSymbols.includes(l.s.symbol) ? 'ai' : 'statistical'}
+                data-forecast-model={
+                  isLastPriceReference(l.s)
+                    ? 'reference'
+                    : aiSymbols.includes(l.s.symbol)
+                      ? 'ai'
+                      : 'statistical'
+                }
               >
-                <path d={l.band} fill={l.color} fillOpacity=".10" stroke="none" />
-                <path data-line="lower" d={l.low} opacity=".65" strokeWidth="1" />
-                <path data-line="upper" d={l.high} opacity=".65" strokeWidth="1" />
                 <path
-                  data-line="actual"
-                  d={l.historical}
-                  stroke={compact && !compare ? 'var(--muted)' : l.color}
+                  data-line="prediction"
+                  d={l.path}
+                  strokeWidth="2.65"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                <circle
+                  data-observed-anchor={l.s.as_of}
+                  cx={x(l.points[0].date)}
+                  cy={y(l.points[0].value)}
+                  r="3"
+                  fill="var(--panel)"
                   strokeWidth="2"
                 />
-                {l.baseline && (
-                  <path
-                    data-line="baseline"
-                    d={l.baseline}
-                    stroke={compare ? l.color : 'var(--muted)'}
-                    opacity={compare ? 0.64 : 1}
-                    strokeDasharray="2 4"
-                    strokeWidth="1.8"
-                  />
-                )}
-                {l.points.length === 1 && (
-                  <line
-                    x1={x(l.points[0].date)}
-                    x2={x(l.points[0].date)}
-                    y1={y(l.points[0].low)}
-                    y2={y(l.points[0].high)}
-                    strokeWidth="2.5"
-                  />
-                )}
-                {compact && (
-                  <circle
-                    data-observed-anchor={l.s.as_of}
-                    cx={x(l.s.as_of)}
-                    cy={y(l.history.at(-1)!.value)}
-                    r="3.4"
-                    fill={compare ? l.color : 'var(--text)'}
-                  />
-                )}
-                {compact && l.points.at(-1) && (
-                  <circle
-                    data-forecast-end={l.points.at(-1)!.date}
-                    cx={x(l.points.at(-1)!.date)}
-                    cy={y(l.points.at(-1)!.value)}
-                    r="2.8"
-                    fill={l.color}
-                  />
-                )}
-                <path data-line="median" d={l.median} strokeDasharray="5 4" strokeWidth="2.4" />
+                <circle
+                  data-forecast-end={l.points.at(-1)!.date}
+                  data-price={l.points.at(-1)!.price}
+                  cx={x(l.points.at(-1)!.date)}
+                  cy={y(l.points.at(-1)!.value)}
+                  r="3.5"
+                  fill={l.color}
+                />
               </g>
             ))}
-            <line x1={split} x2={split} y1={T} y2={B} stroke="var(--muted)" strokeDasharray="2 4" />
             <text x={L} y="15">
-              {includeHistory
-                ? W < 570
-                  ? 'History'
-                  : 'Observed history'
-                : compare
-                  ? 'Shared observation'
-                  : (hasIntraday ? 'Quote ' : 'Close ') +
-                    marketPrice(inspected.points[0].median, inspected.currency)}
+              {compare
+                ? 'Observed'
+                : (hasIntraday ? 'Quote ' : 'Close ') +
+                  marketPrice(predictedPrice(firstPoint), inspected.currency)}
             </text>
-            <text
-              x={includeHistory ? split + 7 : W - R}
-              y="15"
-              textAnchor={includeHistory ? 'start' : 'end'}
-            >
-              {includeHistory
-                ? compact
-                  ? 'Future projection'
-                  : 'Forecast'
-                : compare
-                  ? 'Projected returns'
-                  : 'Median ' + marketPrice(inspected.points.at(-1)?.median, inspected.currency)}
+            <text x={W - R} y="15" textAnchor="end">
+              {compare
+                ? changeLabel
+                : (reference ? 'Reference ' : 'Prediction ') +
+                  predictedPriceText(
+                    predictedPrice(endPoint),
+                    inspected.currency,
+                    predictedPrice(firstPoint),
+                  )}
             </text>
             <line
               x1={x(position)}
@@ -462,13 +382,8 @@ export function ForecastChart({
             <text x={L} y={H - 4}>
               {shortDay(first)}
             </text>
-            {includeHistory && W > 570 && (
-              <text x={split} y={H - 4} textAnchor="middle">
-                {shortDay(anchor)}
-              </text>
-            )}
-            <text x={x(lastLabel)} y={H - 4} textAnchor="end">
-              {shortDay(lastLabel)}
+            <text x={x(lastPrice)} y={H - 4} textAnchor="end">
+              {shortDay(lastPrice)}
             </text>
             <rect
               x={L}
@@ -561,11 +476,6 @@ export function ForecastChart({
           </div>
         )}
       </div>
-      <small className="fc-time-note">
-        {includeHistory
-          ? 'History and forecast use separate time scales.'
-          : 'Points show projected closing prices by trading session.'}
-      </small>
       <div className="forecast-playback">
         <button
           className="icon-btn"
@@ -622,15 +532,15 @@ export function ForecastChart({
         <div className="future-inspected">
           <strong>{series[0].symbol}</strong>
           {projected ? (
-            <>
-              <span>
-                {medianLabel} {marketPrice(projected.median, inspected.currency)}
-              </span>
-              <span>
-                Modeled range {marketPrice(projected.low, inspected.currency)} –{' '}
-                {marketPrice(projected.high, inspected.currency)}
-              </span>
-            </>
+            <span>
+              {reference ? 'Reference' : 'Predicted'}{' '}
+              {predictedPriceText(
+                predictedPrice(projected),
+                inspected.currency,
+                predictedPrice(firstPoint),
+              )}{' '}
+              · {predictedChange(predictedPrice(projected), predictedPrice(firstPoint))}
+            </span>
           ) : observed ? (
             <span>
               {inspected.anchor_kind === 'intraday' && position === inspected.as_of
@@ -649,40 +559,29 @@ export function ForecastChart({
               <tr>
                 <th>Ticker</th>
                 <th>{hasIntraday ? 'Observed price' : 'Observed close'}</th>
-                <th>Median forecast</th>
-                <th>10th–90th percentile</th>
+                <th>{priceLabel}</th>
+                <th>{changeLabel}</th>
               </tr>
             </thead>
             <tbody>
               {lines.map(({ s, color, basis }) => {
                 const actual = s.history.find((p) => p.date === position),
                   point = position > s.as_of ? s.points.find((p) => p.date === position) : undefined
-                const display = (v: number) =>
-                  marketPrice(v, s.currency) +
-                  (compare
-                    ? ' (' +
-                      new Intl.NumberFormat(undefined, {
-                        style: 'percent',
-                        signDisplay: 'exceptZero',
-                        maximumFractionDigits: 2,
-                      }).format(v / basis - 1) +
-                      ')'
-                    : '')
                 return (
                   <tr key={s.symbol}>
                     <th>
                       <i style={{ background: color }} />
-                      {s.symbol} <small>{s.currency}</small>
+                      {s.symbol}{' '}
+                      <small>
+                        {s.currency}
+                        {isLastPriceReference(s) && ' · last-price reference'}
+                      </small>
                     </th>
-                    <td>{actual ? display(actual.price) : '—'}</td>
-                    <td>{point ? display(point.median) : '—'}</td>
+                    <td>{actual ? marketPrice(actual.price, s.currency) : '—'}</td>
                     <td>
-                      {point
-                        ? marketPrice(point.low, s.currency) +
-                          ' – ' +
-                          marketPrice(point.high, s.currency)
-                        : '—'}
+                      {point ? predictedPriceText(predictedPrice(point), s.currency, basis) : '—'}
                     </td>
+                    <td>{point ? predictedChange(predictedPrice(point), basis) : '—'}</td>
                   </tr>
                 )
               })}

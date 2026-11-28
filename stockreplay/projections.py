@@ -11,11 +11,11 @@ from itertools import pairwise
 from zoneinfo import ZoneInfo
 
 import exchange_calendars as xc
-import numpy as np
 import pandas as pd
 
 from .desk import parallel
 from .price_ranges import RANGE_PRESETS, US_EQUITY_EXCHANGES, validate_range
+from .price_scenario import MIN_RETURNS, scenario
 from .symbols import ticker
 
 HORIZONS = {
@@ -26,10 +26,7 @@ HORIZONS = {
     "1y": pd.DateOffset(years=1),
     "5y": pd.DateOffset(years=5),
 }
-MODEL = "historical-blocks-v1"
-PATHS = 1024
-BLOCK = 5
-MIN_RETURNS = 63
+MODEL = "conditional-history-v2"
 # Yahoo exchange identifiers. Use a named venue calendar when the provider identifies one.
 VENUES = {
     "LSE": "XLON",
@@ -104,66 +101,6 @@ def observed_closes(bars, sessions):
         ):
             by_date[day] = float(price)
     return tuple(by_date.get(s.date().isoformat()) for s in sessions)
-
-
-def calibration(returns):
-    finite = returns[np.isfinite(returns)]
-    if finite.size < MIN_RETURNS:
-        raise ValueError("At least 63 observed consecutive-session price changes are needed.")
-    blocks = np.lib.stride_tricks.sliding_window_view(returns, BLOCK)
-    blocks = blocks[np.isfinite(blocks).all(axis=1)]
-    if len(blocks) < 30:
-        raise ValueError("Too few complete five-session blocks of observed prices are available.")
-    # Center each block position to remove the long-run sample drift without erasing
-    # observed cross-day dependence. Apply recent volatility, with a bounded ratio.
-    recent = finite[-63:]
-    recent_std = np.std(recent, ddof=1)
-    full_std = np.std(finite, ddof=1)
-    if full_std <= np.finfo(float).eps:
-        raise ValueError("Observed price changes have too little variation to estimate a range.")
-    scale = np.clip(recent_std / full_std, 0.5, 2.0)
-    shocks = (blocks - blocks.mean(axis=0)) * scale
-    drift = np.clip(0.25 * recent.mean(), -0.0015, 0.0015)
-    return shocks, float(drift), float(recent_std)
-
-
-def check_one_session(returns):
-    # Expanding-window checks use only observations known before each test close.
-    tested = covered = 0
-    for index in range(max(MIN_RETURNS, len(returns) - 63), len(returns)):
-        if not np.isfinite(returns[index]):
-            continue
-        try:
-            shocks, drift, _ = calibration(returns[:index])
-        except ValueError:
-            continue
-        lo, hi = np.quantile(shocks[:, 0] + drift, [0.1, 0.9])
-        tested += 1
-        covered += int(lo <= returns[index] <= hi)
-    return {
-        "tested_sessions": tested,
-        "inside_band_sessions": covered,
-        "observed_coverage_pct": 100 * covered / tested if tested else None,
-    }
-
-
-@lru_cache(maxsize=32)
-def simulate(symbol, seed, as_of, closes, steps, sessions_per_year):
-    values = np.asarray(closes, dtype=float)
-    returns = np.diff(np.log(values))
-    shocks, initial_drift, recent_std = calibration(returns)
-    rng_key = hashlib.sha256(f"{MODEL}|{symbol}|{seed}|{as_of}".encode()).digest()
-    rng = np.random.default_rng(int.from_bytes(rng_key[:16], "big"))
-    # Block-major sampling makes overlapping forecast dates reproducible across horizons.
-    picks = rng.integers(len(shocks), size=(math.ceil(steps / BLOCK), PATHS))
-    increments = shocks[picks].transpose(0, 2, 1).reshape(-1, PATHS)[:steps]
-    drift = initial_drift * np.exp2(-np.arange(steps) / 20)
-    cumulative = np.cumsum(increments + drift[:, None], axis=0)
-    with np.errstate(over="ignore", under="ignore"):
-        bands = values[-1] * np.exp(np.quantile(cumulative, [0.1, 0.5, 0.9], axis=1).T)
-    if not np.isfinite(bands).all() or (bands <= 0).any():
-        raise ValueError("The observed price swings are too large to estimate this horizon.")
-    return bands, float(100 * recent_std * np.sqrt(sessions_per_year)), check_one_session(returns)
 
 
 def horizon_end(day, horizon, custom_end):
@@ -341,18 +278,28 @@ def project_one(
     lookback = cal.sessions_in_range(
         expected - pd.DateOffset(years=1) + timedelta(days=1), expected
     )
-    bands, volatility, validation = simulate(
-        symbol, seed, confirmed, closes, len(future), len(lookback)
+    bands, volatility, model_inputs, validation, validation_month, validation_year = scenario(
+        closes, len(future), len(lookback)
     )
+    reference = model_inputs["kind"] == "last_price_reference"
+    if reference:
+        notes.append("Last-price reference. " + model_inputs["reference_reason"])
     scale = spot["price"] / closes[-1]
     points = [
-        {"date": spot["date"], "low": spot["price"], "median": spot["price"], "high": spot["price"]}
+        {
+            "date": spot["date"],
+            "low": spot["price"],
+            "prediction": spot["price"],
+            "median": spot["price"],
+            "high": spot["price"],
+        }
     ]
     earliest = max(first.date(), start_date or first.date())
     points.extend(
         {
             "date": s.date().isoformat(),
             "low": float(lo * scale),
+            "prediction": float(med * scale),
             "median": float(med * scale),
             "high": float(hi * scale),
         }
@@ -437,6 +384,7 @@ def project_one(
         "anchor_kind": spot["kind"],
         "anchor_time": spot["time"],
         "horizon_origin": origin.date().isoformat(),
+        "projected_sessions": len(future),
         "requested_start": (start_date or first.date()).isoformat(),
         "requested_end": civil_end.isoformat(),
         "data_note": " ".join(notes) or None,
@@ -452,15 +400,22 @@ def project_one(
         "annualized_volatility_pct": volatility,
         "annualization_sessions": len(lookback),
         "validation_1d": validation,
-        "method": "Historical five-session block simulation",
+        "validation_21d": validation_month,
+        "validation_252d": validation_year,
+        "model_inputs": model_inputs,
+        "method": "Last-price reference"
+        if reference
+        else "Comparable historical trading conditions",
         "model_version": MODEL,
         "data_digest": digest,
         "assumptions": [
             "Prices begin at the dated observed anchor. Historical calibration uses confirmed daily share prices without dividend reinvestment.",
-            "1,024 scenarios resample consecutive five-session blocks. The band shows the 10th and 90th percentiles of those scenarios.",
-            "The last 63 price changes set recent volatility. The simulation limits its scaling to half or twice the historical level.",
-            "One quarter of the recent daily trend, capped at ±0.15% per session, fades by half every 20 sessions.",
-            "Future splits, distributions and unexpected events can move the quoted price outside the band.",
+            "The path carries the dated anchor forward when history is insufficient to fit trading conditions."
+            if reference
+            else "The path weights non-overlapping follow-on price changes after similar momentum, volatility and drawdowns. Fewer or poorer matches pull the estimate toward the dated anchor.",
+            "The model limits individual historical moves to the central 95% of observed daily returns before volatility adjustment. After the last supported horizon the price path stays level.",
+            "Walk-forward checks compare absolute price errors against an unchanged close. Each horizon uses non-overlapping outcomes, including 21- and 252-session checks when observations permit.",
+            "This models quoted share prices. Cash distributions, dividend reinvestment and future corporate actions are excluded. Historical dispersion does not establish a future probability.",
         ],
     }
 
@@ -494,7 +449,7 @@ def load_projection(
                 if cache
                 and (p := cache.read(f"bars:{symbol}:1d:{span}"))
                 and p.get("data")
-                and len(p["data"].get("bars", [])) > MIN_RETURNS
+                and p["data"].get("bars")
             ]
 
             def last_day(item):
@@ -503,10 +458,9 @@ def load_projection(
 
             if candidates:
                 alternative = max(candidates, key=lambda p: (last_day(p), len(p["data"]["bars"])))
-                if (
-                    not data
-                    or len(data.get("bars", [])) <= MIN_RETURNS
-                    or last_day(alternative) > last_day(packet)
+                if (last_day(alternative), len(alternative["data"]["bars"])) > (
+                    last_day(packet),
+                    len(data.get("bars", [])),
                 ):
                     packet = {**alternative, "stale": True}
             elif not data:

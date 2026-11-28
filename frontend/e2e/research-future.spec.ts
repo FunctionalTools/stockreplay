@@ -1,4 +1,4 @@
-import { test, expect, type APIRequestContext } from '@playwright/test'
+import { test, expect, type APIRequestContext, type Page } from '@playwright/test'
 
 async function connect(request: APIRequestContext) {
   expect(
@@ -9,7 +9,13 @@ async function connect(request: APIRequestContext) {
   expect((await request.patch('/api/ai', { data: { provider: 'openai' } })).ok()).toBe(true)
 }
 
-test('the homepage price card generates and reopens a cited future forecast on explicit request', async ({
+async function keyless(page: Page) {
+  await page.route('**/api/ai', (route) =>
+    route.fulfill({ json: { provider: 'openai', configured: false, model: null } }),
+  )
+}
+
+test('the homepage automatically applies the active AI prediction and retains its cited outlook', async ({
   page,
   request,
 }) => {
@@ -19,37 +25,46 @@ test('the homepage price card generates and reopens a cited future forecast on e
   page.on('request', (r) => {
     if (r.method() === 'POST' && r.url().includes('/api/desk/forecast/')) generations.push(r.url())
   })
-  await page.goto('/#/research/AAPL')
+  await page.goto('/#/research/AAPL/range_6mo')
   const past = page.getByRole('region', { name: 'Price history', exact: true })
-  await past.getByRole('button', { name: '5D', exact: true }).click()
-  await past.getByRole('button', { name: 'Future', exact: true }).click()
-  const card = page.getByRole('region', { name: 'Price forecast', exact: true })
-  await expect(
-    card
-      .getByRole('group', { name: 'Forecast period' })
-      .getByRole('button', { name: '5D', exact: true }),
-  ).toHaveAttribute('aria-pressed', 'true')
-  await card.getByRole('button', { name: '6M', exact: true }).click()
-  await expect(page).toHaveURL(/#\/research\/AAPL\?view=future$/)
-  expect(generations).toHaveLength(0)
   const finished = page.waitForResponse(
     (r) => r.request().method() === 'POST' && r.url().includes('/api/desk/forecast/AAPL'),
   )
-  await card.getByRole('button', { name: /Generate AI forecast|Update AI forecast/ }).click()
+  await past.getByRole('button', { name: 'Future', exact: true }).click()
+  const card = page.getByRole('region', { name: 'Price forecast', exact: true })
+  await expect(page).toHaveURL(/#\/research\/AAPL\?view=future$/)
   const response = await finished
   expect(response.ok(), await response.text()).toBe(true)
   const { forecast } = await response.json()
   await expect(card).toContainText(forecast.summary)
-  const historyToggle = card.getByRole('checkbox', { name: 'Show past prices' })
-  await expect(historyToggle).not.toBeChecked()
-  await expect(card.locator('[data-observed-anchor]')).toBeVisible()
-  await historyToggle.check()
-  await expect(card.locator('path[data-line="actual"]')).toHaveAttribute('d', /^M.+L/)
-  await historyToggle.uncheck()
-  await expect(card.locator('path[data-line="median"]')).toHaveAttribute('d', /^M.+L/)
-  await expect(card.locator('path[data-line="baseline"]')).toHaveAttribute('d', /^M.+L/)
-  await expect(card.locator('path[data-line="upper"]')).toHaveCount(1)
-  await expect(card.locator('path[data-line="lower"]')).toHaveCount(1)
+  await expect(
+    card.locator('[data-forecast-model="ai"] path[data-line="prediction"]'),
+  ).toHaveAttribute('d', /^M.+L/)
+  await expect(card.locator('.forecast-plot svg path')).toHaveCount(1)
+  await expect(card.locator('[data-forecast-end]')).toHaveAttribute(
+    'data-price',
+    String(forecast.points.at(-1).prediction),
+  )
+  await expect(card.getByText(/median|percentile|show past prices/i)).toHaveCount(0)
+  const method = card
+    .locator('details')
+    .filter({ has: page.locator('summary', { hasText: 'How the prediction was calculated' }) })
+  await method.locator('summary').click()
+  await expect(method).toContainText('Buy score · ' + forecast.scores.buy_score + '/100')
+  await expect(method).toContainText('Risk score · ' + forecast.scores.risk_score + '/100')
+  await expect(method).toContainText(forecast.scores.buy_reason)
+  await expect(method).toContainText(forecast.scores.risk_reason)
+  for (const id of [...forecast.scores.buy_source_ids, ...forecast.scores.risk_source_ids]) {
+    const source = forecast.sources.find((s: { id: string }) => s.id === id)
+    await expect(
+      method
+        .locator('a')
+        .filter({ hasText: source.title || source.source })
+        .first(),
+    ).toHaveAttribute('href', source.url)
+  }
+  await method.locator('summary').click()
+  expect(generations).toHaveLength(1)
   await expect(card.locator('.future-citations a').first()).toHaveAttribute('href', /^https:\/\//)
   const fiscal = card.getByRole('group', { name: 'Fiscal quarters' })
   for (const q of ['Q1', 'Q2', 'Q3', 'Q4']) {
@@ -67,7 +82,6 @@ test('the homepage price card generates and reopens a cited future forecast on e
   await page.reload()
   await expect(card.getByRole('button', { name: 'Update AI forecast' })).toBeVisible()
   await expect(card).toContainText(forecast.summary)
-  expect(generations).toHaveLength(1)
   await card.getByRole('button', { name: 'Past', exact: true }).click()
   await expect(past.getByRole('group', { name: 'Chart period' })).toBeVisible()
   await page.goBack()
@@ -76,10 +90,9 @@ test('the homepage price card generates and reopens a cited future forecast on e
 
 test('future horizons and custom future dates remain accessible in the main card on mobile', async ({
   page,
-  request,
 }) => {
   test.skip(process.env.STOCKREPLAY_LIVE_TESTS === '1')
-  await connect(request)
+  await keyless(page)
   await page.setViewportSize({ width: 390, height: 844 })
   await page.goto('/#/research/MSFT?view=future')
   const card = page.getByRole('region', { name: 'Price forecast', exact: true }),
@@ -125,8 +138,8 @@ test('future horizons and custom future dates remain accessible in the main card
     await expect(
       card.locator('[data-forecast-model="statistical"] [data-forecast-end]'),
     ).toHaveAttribute('data-forecast-end', baseline.points.at(-1).date)
-    await expect(card.locator('path[data-line="median"]')).toHaveAttribute('d', /^M.+L/)
-    await expect(card.getByLabel('Projection values')).toContainText('10th–90th percentile')
+    await expect(card.locator('path[data-line="prediction"]')).toHaveAttribute('d', /^M.+L/)
+    await expect(card.getByLabel('Projection values')).toContainText('Predicted for')
   }
   expect(autoRequests).toHaveLength(0)
   await choices.getByRole('button', { name: 'Custom' }).click()
@@ -211,11 +224,9 @@ test('future horizons and custom future dates remain accessible in the main card
   expect(projectedEnd >= a && projectedEnd <= b).toBe(true)
   await expect(endpoint).toHaveAttribute('data-forecast-end', projectedEnd)
   expect(customRequests).toBe(1)
-  await expect(card.getByText('Statistical median', { exact: true })).toBeVisible()
+  await expect(card.locator('.forecast-plot svg path')).toHaveCount(1)
   await expect(card.locator('.forecast-marker').filter({ hasText: 'Q2' })).toBeVisible()
   expect(autoRequests).toHaveLength(0)
-  await card.getByRole('button', { name: /Generate AI forecast|Update AI forecast/ }).click()
-  await expect(card.locator('path[data-line="baseline"]')).toBeVisible()
   const events = card.locator('details.future-events')
   await events.locator('summary').first().click()
   await events.getByLabel('Inspect a forecast event').selectOption('weekend-quarter')
@@ -234,10 +245,10 @@ test('future horizons and custom future dates remain accessible in the main card
     'aria-pressed',
     'true',
   )
-  await expect(card.getByRole('button', { name: 'Update AI forecast' })).toBeVisible()
+  await expect(endpoint).toHaveAttribute('data-forecast-end', projectedEnd)
 })
 
-test('homepage forecast comparisons wait for explicit generation and stay in the shared link', async ({
+test('homepage forecast comparisons use one path per ticker and stay in the shared link', async ({
   page,
   request,
 }) => {
@@ -258,27 +269,26 @@ test('homepage forecast comparisons wait for explicit generation and stay in the
   const comparisonUrl = page.url()
   await card.getByRole('button', { name: '5D', exact: true }).click()
   await expect(page).toHaveURL(/range=5d&compare=TSLA$/)
-  await expect(card.locator('[data-forecast-model="statistical"]')).toHaveCount(2)
+  await expect(card.locator('.forecast-plot svg path')).toHaveCount(2)
   await page.goBack()
   await expect(page).toHaveURL(comparisonUrl)
   await expect(card.getByRole('button', { name: '1M', exact: true })).toHaveAttribute(
     'aria-pressed',
     'true',
   )
-  await expect(card.locator('[data-forecast-model="statistical"]')).toHaveCount(2)
-  expect(generated).toHaveLength(0)
-  await card.getByRole('button', { name: 'Generate AI forecast', exact: true }).click()
+  await expect(card.locator('.forecast-plot svg path')).toHaveCount(2)
+  expect(generated.filter((p) => p.endsWith('/TSLA'))).toHaveLength(0)
   await expect(card.getByRole('heading', { name: 'AMD forecast outlook' })).toBeVisible()
   await extra.getByRole('button', { name: 'Generate TSLA forecast' }).click()
   await expect(card.getByRole('heading', { name: 'Projected returns' })).toBeVisible()
-  await expect(card.locator('path[data-line="median"]')).toHaveCount(2)
-  await expect(card.locator('path[data-line="baseline"]')).toHaveCount(2)
-  expect(generated).toEqual(['/api/desk/forecast/AMD', '/api/desk/forecast/TSLA'])
+  await expect(card.locator('path[data-line="prediction"]')).toHaveCount(2)
+  await expect(card.locator('[data-forecast-model="ai"] path')).toHaveCount(2)
+  expect(generated.filter((p) => p.endsWith('/TSLA'))).toHaveLength(1)
   await page.reload()
   await expect(card.getByText('Return from the shared close on', { exact: false })).toBeVisible()
-  expect(generated).toHaveLength(2)
+  expect(generated.filter((p) => p.endsWith('/TSLA'))).toHaveLength(1)
   await extra.getByRole('button', { name: 'Remove TSLA from comparison' }).click()
-  await expect(card.locator('path[data-line="median"]')).toHaveCount(1)
+  await expect(card.locator('path[data-line="prediction"]')).toHaveCount(1)
   await expect(card.getByRole('link', { name: 'Forecast calendar' })).toHaveAttribute(
     'href',
     /calendar\/AMD/,
@@ -411,7 +421,7 @@ test('rapid horizon changes discard late prices and a failed AI request preserve
   )
   await choice.getByRole('button', { name: '1D', exact: true }).click()
   await slow
-  await expect(card.locator('path[data-line="actual"]')).toHaveCount(0)
+  await expect(card.locator('path[data-line="prediction"]')).toHaveCount(0)
   await expect(card.getByRole('status').filter({ hasText: 'Calculating the 1D' })).toBeVisible()
   await choice.getByRole('button', { name: '1M', exact: true }).click()
   await expect(monthly).toHaveAttribute('data-forecast-end', monthEnd!)
@@ -419,7 +429,7 @@ test('rapid horizon changes discard late prices and a failed AI request preserve
   await card.getByRole('button', { name: 'Generate AI forecast', exact: true }).click()
   await expect(card).toContainText('The selected AI provider is unavailable.')
   await expect(monthly).toHaveAttribute('data-forecast-end', monthEnd!)
-  await expect(card.getByText('Statistical median', { exact: true })).toBeVisible()
+  await expect(card.locator('[data-forecast-model="statistical"] path')).toHaveCount(1)
 })
 
 test('a failed projection can be retried and an expired AI snapshot stays separate from the forward path', async ({
@@ -427,7 +437,7 @@ test('a failed projection can be retried and an expired AI snapshot stays separa
   request,
 }) => {
   test.skip(process.env.STOCKREPLAY_LIVE_TESTS === '1')
-  await connect(request)
+  await keyless(page)
   const daily = await (await request.get('/api/desk/projections?symbols=MSFT&horizon=1d')).json()
   const current = daily.series[0]
   expect(current, JSON.stringify(daily.errors)).toBeTruthy()
@@ -476,7 +486,7 @@ test('a failed projection can be retried and an expired AI snapshot stays separa
   await page.goto('/#/research/MSFT?view=future&range=1d')
   const card = page.getByRole('region', { name: 'Price forecast', exact: true })
   await expect(card).toContainText('The source returned no usable prices.')
-  await expect(card.locator('path[data-line="actual"]')).toHaveCount(0)
+  await expect(card.locator('path[data-line="prediction"]')).toHaveCount(0)
   await card.getByRole('button', { name: 'Retry price projection' }).click()
   await expect(
     card.locator('[data-forecast-model="statistical"] [data-forecast-end]'),
@@ -488,6 +498,12 @@ test('a failed projection can be retried and an expired AI snapshot stays separa
   await card.locator('summary').filter({ hasText: 'Saved AI forecast' }).click()
   const archive = card.locator('.future-archive')
   await expect(archive).toContainText(older.summary)
+  await expect(archive.locator('.forecast-plot svg path')).toHaveCount(1)
+  await expect(archive.locator('[data-forecast-end]')).toHaveAttribute(
+    'data-price',
+    String(through.price),
+  )
+  await expect(archive.getByText(/median|percentile|show past prices/i)).toHaveCount(0)
   await expect(archive.locator('[data-forecast-end]')).toHaveAttribute(
     'data-forecast-end',
     through.date,
@@ -502,13 +518,13 @@ test('one-session forecasts fill the plot between the observed anchor and the es
   const packet = await (await request.get('/api/desk/projections?symbols=SNDK&horizon=1d')).json()
   const s = packet.series[0]
   expect(s, JSON.stringify(packet.errors)).toBeTruthy()
-  const anchor = s.points[0].median
+  await keyless(page)
+  const anchor = 100
   s.history[0].price = anchor * 4
-  // Exercise the video case: before a large historical price change, old prices crowded the next day's band.
   const endDate = s.points.at(-1).date
   s.points = [
-    s.points[0],
-    { date: endDate, median: anchor * 0.99, low: anchor * 0.92, high: anchor * 1.06 },
+    { ...s.points[0], prediction: anchor, median: anchor },
+    { date: endDate, prediction: 103, median: 99, low: 1, high: 900, baseline: 180 },
   ]
   await page.route('**/api/desk/projections?*', (r) => r.fulfill({ json: packet }))
   await page.route('**/api/desk/forecast/SNDK?*', (r) => r.fulfill({ json: { forecast: null } }))
@@ -520,36 +536,29 @@ test('one-session forecasts fill the plot between the observed anchor and the es
     'data-observed-anchor',
     s.as_of,
   )
-  const geometry = () =>
-    plot.evaluate((el) => {
-      const root = el.querySelector('svg')!
-      const path = (name: string) => el.querySelector<SVGPathElement>(`path[data-line="${name}"]`)!
-      const end = (p: SVGPathElement) => p.getPointAtLength(p.getTotalLength())
-      const median = path('median')
-      return {
-        fraction: (end(median).x - median.getPointAtLength(0).x) / root.viewBox.baseVal.width,
-        band: (end(path('lower')).y - end(path('upper')).y) / root.viewBox.baseVal.height,
-        smallestAxisValue: Math.min(
-          ...Array.from(el.querySelectorAll('[data-axis-value]'), (v) =>
-            Number(v.getAttribute('data-axis-value')),
-          ),
+  await expect(plot.locator('svg path')).toHaveCount(1)
+  await expect(card.getByLabel('Predicted price', { exact: true })).toHaveText('$103.00')
+  await expect(card.locator('.period-change')).toContainText('+3.00%')
+  await expect(card.locator('.future-inspected')).toContainText('Predicted $103.00 · +3.00%')
+  const geometry = await plot.evaluate((el) => {
+    const svg = el.querySelector('svg')!
+    const path = el.querySelector<SVGPathElement>('path[data-line="prediction"]')!
+    const first = path.getPointAtLength(0),
+      last = path.getPointAtLength(path.getTotalLength())
+    return {
+      width: (last.x - first.x) / svg.viewBox.baseVal.width,
+      height: (first.y - last.y) / svg.viewBox.baseVal.height,
+      lowest: Math.min(
+        ...Array.from(el.querySelectorAll('[data-axis-value]'), (v) =>
+          Number(v.getAttribute('data-axis-value')),
         ),
-      }
-    })
-  const forward = await geometry()
-  expect(forward.fraction).toBeGreaterThan(0.65)
-  expect(forward.band).toBeGreaterThan(0.45)
-  const past = card.getByRole('checkbox', { name: 'Show past prices' })
-  await past.check()
-  expect((await geometry()).band).toBeLessThan(forward.band / 2)
-  await past.uncheck()
-  expect((await geometry()).band).toBeCloseTo(forward.band)
-  // Nonnegative price scales at long horizons, including where the padded band approaches zero.
-  s.points[1].low = anchor * 0.001
-  s.points[1].high = anchor * 8
-  await page.reload()
-  await expect(plot.locator('[data-observed-anchor]')).toBeVisible()
-  expect((await geometry()).smallestAxisValue).toBe(0)
+      ),
+    }
+  })
+  expect(geometry.width).toBeGreaterThan(0.65)
+  expect(geometry.height).toBeGreaterThan(0.4)
+  expect(geometry.lowest).toBeGreaterThan(98)
+  await expect(card.getByText(/median|percentile|show past prices/i)).toHaveCount(0)
 })
 
 for (const width of [390, 1440]) {
@@ -603,3 +612,132 @@ for (const width of [390, 1440]) {
     },
   )
 }
+
+test('a last-price reference identifies the price-model fallback without claiming historical accuracy', async ({
+  page,
+  request,
+}) => {
+  await keyless(page)
+  const packet = await (await request.get('/api/desk/projections?symbols=SNDK&horizon=1d')).json()
+  const s = packet.series[0],
+    anchor = s.points[0].prediction
+  const reason = 'The published series has too few completed sessions for a fitted prediction.'
+  s.model_inputs = { kind: 'last_price_reference', reference_reason: reason }
+  s.points = s.points.map((p: { date: string }) => ({ ...p, prediction: anchor }))
+  await page.route('**/api/desk/projections?*', (r) => r.fulfill({ json: packet }))
+  await page.goto('/#/research/SNDK?view=future&range=1d')
+  const card = page.getByRole('region', { name: 'Price forecast', exact: true })
+  await expect(card.getByText('1D · Last-price reference', { exact: true })).toBeVisible()
+  await expect(card.getByText(reason, { exact: false }).first()).toBeVisible()
+  await expect(card.locator('.period-change')).toContainText('0.00%')
+  await expect(card.locator('.forecast-plot svg path')).toHaveCount(1)
+  await card.getByText('Why the last price is used', { exact: true }).click()
+  await expect(card.getByText(/average next-session prediction error/)).toHaveCount(0)
+  await card.getByRole('button', { name: 'Generate now', exact: true }).click()
+  await expect(page).toHaveURL(/#\/settings(?:[/?]|$)/)
+})
+
+test('scored IPO research keeps a last-price reference in read-only Research and Calendar', async ({
+  page,
+  request,
+}) => {
+  test.skip(process.env.STOCKREPLAY_LIVE_TESTS === '1')
+  const packet = await (await request.get('/api/desk/projections?symbols=SNDK&horizon=1d')).json()
+  const series = packet.series[0]
+  expect(series, JSON.stringify(packet.errors)).toBeTruthy()
+  const price = series.points[0].prediction
+  const reason = 'Only a few verified sessions are available after listing.'
+  series.method = 'Last-price reference'
+  series.model_inputs = { kind: 'last_price_reference', reference_reason: reason }
+  series.points = series.points.map((p: { date: string }) => ({
+    ...p,
+    prediction: price,
+    median: price,
+  }))
+  const model = 'browser-fixture-model',
+    provider = 'openai',
+    created = series.as_of + 'T22:01:00Z'
+  const evidence = {
+    id: 'filing',
+    source: 'Issuer',
+    title: 'Quarterly issuer filing',
+    url: 'https://www.sec.gov/edgar/search/',
+    kind: 'company_filings',
+    date: series.as_of,
+  }
+  const snapshot = {
+    ...series,
+    id: 'ipo-reference',
+    model,
+    provider,
+    created,
+    range: '1d',
+    summary: 'The latest observed close is the reference price.',
+    summary_source_ids: ['filing'],
+    drivers: [],
+    quarters: [],
+    sources: [evidence],
+    scores: {
+      buy_score: 91,
+      buy_status: 'unresolved',
+      risk_score: 73,
+      origin: 'forecast_model',
+      as_of: series.as_of,
+      created,
+      provider,
+      model,
+      buy_reason: 'The available filing does not resolve the buy judgment.',
+      risk_reason: 'Limited operating history increases uncertainty.',
+      buy_source_ids: ['filing'],
+      risk_source_ids: ['filing'],
+    },
+  }
+  await page.addInitScript(() =>
+    history.replaceState({ ...history.state, stockreplayReadOnlyForecast: true }, ''),
+  )
+  await page.route('**/api/ai', (r) =>
+    r.fulfill({ json: { provider, model, configured: true, verified: true } }),
+  )
+  await page.route('**/api/desk/projections?*', (r) => r.fulfill({ json: packet }))
+  const writes: string[] = []
+  await page.route('**/api/desk/forecast/SNDK?*', (r) => {
+    if (r.request().method() === 'POST') writes.push(r.request().url())
+    return r.fulfill({ json: { forecast: snapshot } })
+  })
+  await page.goto('/#/research/SNDK?view=future&range=1d')
+  const card = page.getByRole('region', { name: 'Price forecast', exact: true })
+  await expect(card.getByRole('heading', { name: 'SNDK research outlook' })).toBeVisible()
+  await expect(card.getByText('1D · Last-price reference', { exact: true })).toBeVisible()
+  await expect(card.getByLabel('Reference price', { exact: true })).toBeVisible()
+  await expect(card.locator('.period-change')).toContainText('0.00%Reference change')
+  await expect(card.getByText(reason, { exact: true })).toBeVisible()
+  await expect(card.getByText(/AI research generated/)).toContainText('OpenAI · ' + model)
+  for (const view of ['Research', 'Calendar']) {
+    if (view === 'Calendar') {
+      await card.getByRole('link', { name: 'Forecast calendar', exact: true }).click()
+      const table = page.getByRole('table', { name: 'Prices on inspected date' })
+      await expect(table.getByRole('columnheader', { name: 'Reference price' })).toBeVisible()
+      await expect(table.getByRole('columnheader', { name: 'Reference change' })).toBeVisible()
+      await expect(table.getByRole('cell', { name: '0.00%', exact: true })).toBeVisible()
+    }
+    await expect(
+      page.getByRole('img', { name: 'SNDK last-price reference by trading session' }),
+    ).toBeVisible()
+    await expect(
+      page.locator('[data-symbol="SNDK"][data-forecast-model="reference"] path'),
+    ).toHaveCount(1)
+    await expect(page.locator('[data-forecast-model="ai"]')).toHaveCount(0)
+    const detail = page
+      .locator('details')
+      .filter({ has: page.locator('summary', { hasText: 'Why the last price is used' }) })
+    await detail.locator('summary').click()
+    await expect(detail.getByRole('heading', { name: 'Buy score · Unresolved' })).toBeVisible()
+    await expect(detail.getByRole('heading', { name: 'Risk score · 73/100' })).toBeVisible()
+    await expect(detail.getByRole('link', { name: evidence.title }).first()).toHaveAttribute(
+      'href',
+      evidence.url,
+    )
+    await expect(detail.getByText(/average next-session prediction error/)).toHaveCount(0)
+  }
+  expect(writes).toEqual([])
+})

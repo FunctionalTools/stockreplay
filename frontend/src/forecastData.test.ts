@@ -5,6 +5,9 @@ import {
   eventPeriod,
   eventPaths,
   forecastInspectionDate,
+  predictedChange,
+  predictedPrice,
+  predictedPriceText,
   latestSharedClose,
   type Forecast,
 } from './forecastData'
@@ -71,4 +74,13 @@ describe('forecast comparisons', () => {
     expect(b).toContain('start=2032-01-13&end=2037-01-12')
     expect(eventPaths(['SNDK'], '2027-01-01', '2027-01-31')[1]).toBeNull()
   })
+})
+
+it('reads one canonical prediction for prices and changes, including old snapshots and tiny moves', () => {
+  expect(predictedPrice({ date: '2026-12-01', prediction: 102, median: 94 })).toBe(102)
+  expect(predictedPrice({ date: '2026-12-01', median: 94 })).toBe(94)
+  expect(predictedChange(102, 100)).toBe('+2.00%')
+  expect(predictedChange(100.00003, 100)).toBe('+0.00003%')
+  expect(predictedPriceText(100.00003, 'USD', 100)).toBe('$100.00003')
+  expect(predictedChange(100, 100)).toBe('0.00%')
 })

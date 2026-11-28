@@ -328,7 +328,9 @@ def test_migration_keeps_an_existing_remembered_key_and_explicit_provider_choice
             and before["storage"] == "macOS Keychain"
         )
         assert c.patch("/api/ai", json={"provider": "ollama"}).json()["provider"] == "ollama"
-        assert c.get("/api/openai").json() == before
+        # Selecting another provider advances the active-connection revision,
+        # while the separately stored OpenAI configuration remains intact.
+        assert c.get("/api/openai").json() == {k: v for k, v in before.items() if k != "revision"}
     reopened = create_app(tmp_path)
     reopened.state.terminal.ai.ollama.transport = native_transport([], offline=True)
     with TestClient(reopened) as c:

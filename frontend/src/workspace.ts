@@ -19,6 +19,8 @@ export type Connection = {
   configured: boolean
   verified: boolean
   verified_at: string | null
+  revision?: number
+  generation_ready?: boolean
   model: string
   storage: string
   web_search?: { verified: boolean; verified_at?: string | null; detail?: string }

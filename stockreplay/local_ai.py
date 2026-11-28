@@ -813,12 +813,21 @@ class Providers:
                 ("openai" if legacy else "ollama",),
             )
 
-    def active(self):
+    def selection(self):
         with self.db.connect() as c:
-            name = c.execute("select provider from ai_settings where id=1").fetchone()[0]
-        return {"openai": self.openai, "ollama": self.ollama, "ollama_cloud": self.ollama_cloud}[
-            name
-        ]
+            provider, revision = c.execute(
+                "select provider,revision from ai_settings where id=1"
+            ).fetchone()
+        gateways = {"openai": self.openai, "ollama": self.ollama, "ollama_cloud": self.ollama_cloud}
+        return gateways[provider], revision
+
+    def active(self):
+        return self.selection()[0]
+
+    def status(self):
+        # The revision changes with settings edits, independently of successful model calls.
+        gateway, revision = self.selection()
+        return {**gateway.status(), "revision": revision}
 
     def reject_credentials(self, text):
         from .assistant import reject_key
@@ -836,11 +845,20 @@ class Providers:
             c.execute(
                 "update ai_settings set provider=?, revision=revision+1 where id=1", (provider,)
             )
-        return self.active().status()
+        return self.status()
 
     def revision(self):
         with self.db.connect() as c:
             return c.execute("select revision from ai_settings where id=1").fetchone()[0]
+
+    def forget(self, gateway):
+        status = gateway.forget()
+        with self.db.connect() as c:
+            c.execute(
+                "update ai_settings set revision=revision+1 where id=1 and provider=?",
+                (gateway.provider,),
+            )
+        return {**status, "revision": self.revision()}
 
     def activate_verified(self, provider, revision, model=None):
         with self.db.connect() as c:
@@ -858,7 +876,7 @@ class Providers:
         revision = self.revision()
         result = gateway.set(settings)
         self.activate_verified(gateway.provider, revision)
-        return result
+        return {**result, "revision": revision + 1}
 
     def configure_ollama(self, model):
         revision = self.revision()
@@ -866,4 +884,4 @@ class Providers:
         self.activate_verified("ollama", revision, model)
         with self.ollama.lock:
             self.ollama.verified = (model, now())
-        return self.ollama.status()
+        return {**self.ollama.status(), "revision": revision + 1}

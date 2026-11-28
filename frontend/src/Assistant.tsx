@@ -16,7 +16,8 @@ import { ChatMessage, ChatAnchor, linkUrl } from './ChatMessage'
 import { ChatResize, setAssistantSize } from './ChatResize'
 import { executeTabAction, isTabAction, prepareTabDelete } from './customTabs'
 import { rangeLabel, validRangeFocus } from './priceRanges'
-import { fromFutureFocus, snapshotPath, type ForecastResponse } from './forecastSnapshot'
+import { fromFutureFocus, snapshotPath } from './forecastSnapshot'
+import { requestForecast } from './useSavedForecast'
 import './assistant.css'
 import {
   type Connection,
@@ -472,7 +473,7 @@ export function Assistant({
       if (!selection) throw Error('Choose a supported forecast period.')
       // Show the price projection immediately, including when AI generation later fails.
       navigate('Research', s, link?.focus)
-      const { forecast } = await api<ForecastResponse>(snapshotPath(s, selection), 'POST')
+      const { forecast } = await requestForecast(snapshotPath(s, selection), connection)
       if (!forecast) throw Error('The provider did not return a saved forecast.')
       window.dispatchEvent(new CustomEvent('stockreplay:forecast-saved', { detail: forecast }))
       await text('Saved the ' + rangeLabel(selection.preset) + ' forecast for ' + s + '.')
@@ -481,6 +482,7 @@ export function Assistant({
     if (a.kind === 'score') {
       const s = stock(a.symbol),
         result = await api<Opinion>('/desk/recommend/' + enc(s), 'POST')
+      window.dispatchEvent(new CustomEvent('stockreplay:forecast-inputs-changed', { detail: s }))
       updated()
       navigate('Research', s, 'scores')
       await append({

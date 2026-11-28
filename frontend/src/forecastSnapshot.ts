@@ -1,4 +1,5 @@
-import type { EventSource, Forecast, MarketEvent } from './forecastData'
+import { predictedPrice, type EventSource, type Forecast, type MarketEvent } from './forecastData'
+import type { Connection } from './workspace'
 import { fromFocus, rangePresets, validDay, type Selection } from './priceRanges'
 
 export type ForecastSource = {
@@ -29,6 +30,22 @@ export type ForecastSnapshot = Forecast & {
   range: string
   requested_start: string | null
   requested_end: string | null
+  scores?: {
+    buy_score: number
+    risk_score: number
+    buy_status?: 'unresolved' | 'reviewed'
+    risk_status?: 'unresolved' | 'reviewed'
+    origin: 'saved_research' | 'forecast_model'
+    created: string
+    as_of: string
+    model: string
+    provider: string
+    buy_reason: string
+    risk_reason: string
+    buy_source_ids: string[]
+    risk_source_ids: string[]
+    report_id?: string
+  }
   summary: string
   summary_source_ids: string[]
   drivers: { title: string; direction: string; reason: string; source_ids: string[] }[]
@@ -101,10 +118,24 @@ export function matchesProjection(
     !!a &&
     !!b &&
     a.date === b.date &&
-    a.median === b.median &&
+    predictedPrice(a) === predictedPrice(b) &&
     saved.points.length > 1 &&
     saved.points.length === base.points.length &&
     saved.points.every((point, index) => point.date === base.points[index].date)
+  )
+}
+export function matchesActiveForecast(
+  candidate: ForecastSnapshot | null | undefined,
+  base: Forecast,
+  connection: Connection | null,
+  generatedNow = false,
+): candidate is ForecastSnapshot {
+  return (
+    !!connection?.configured &&
+    (!connection.generation_detail || generatedNow) &&
+    candidate?.provider === connection.provider &&
+    candidate?.model === connection.model &&
+    matchesProjection(candidate, base)
   )
 }
 export const providerName = (id?: string) =>
@@ -192,4 +223,20 @@ export function modelEventMarkers(f: ForecastSnapshot): MarketEvent[] {
       },
     ]
   })
+}
+
+export function combinedForecastEvents(snapshots: ForecastSnapshot[], published: MarketEvent[]) {
+  const unique = new Map<string, MarketEvent>()
+  for (const event of [
+    ...snapshots.flatMap(quarterMarkers),
+    ...snapshots.flatMap(modelEventMarkers),
+    ...published,
+  ]) {
+    const quarter = event.kind === 'fiscal' && event.title.match(/\bQ[1-4]\b/i)?.[0].toUpperCase()
+    const key = quarter
+      ? [event.date, ...event.symbols, quarter].join('|')
+      : [event.date, event.url, event.title].join('|')
+    if (!unique.has(key)) unique.set(key, event)
+  }
+  return [...unique.values()].sort((a, b) => a.date.localeCompare(b.date))
 }

@@ -50,15 +50,15 @@ In **Research**, click **Generate scores**. The model determines an independent 
 ## Your workspace
 
 - **Research** opens on a holding when a portfolio is available and uses SPY as the broad-market starting point for an empty account. Choose a ticker directly on the page or set a fixed starting stock in Settings. Select 1D, 5D, longer periods or an exact pair of dates to see the return and its price basis. Research includes analyst vote distributions, published targets, searchable individual firm ratings, and company, sector and market news. The advanced chart adds candlesticks, indicators, replay, comparisons, drawings and chart export.
-- **Past / Future** sits on the main price chart in Research. Pick a preset or custom dates under Past for actual prices. Under Future, every horizon immediately displays its projected median, uncertainty range and end date. Choose **Generate AI forecast** to add your selected AI model’s outlook. Expand **Compare forecasts** to add tickers and generate or reopen each comparison. Reopen saved forecasts to review the same curve and citations. Select an event marker for its source, date status and available expectations.
-- **Calendar** charts a stock or compares up to eight. Choose a day, week, month, six months, year or five years, then move through the projected sessions. The median and shaded interval come from simulated paths based on observed trading history. Select a dated marker for its status, relevance and source.
+- **Future** opens when you look up a stock. The single price line starts at the last observed price. Its percentage is the change from that price to the selected point. With a verified AI connection, StockReplay generates the prediction automatically and saves its scores and sources on your Mac. Select an event for its date, expectations and source. Choose **Past** to explore observed prices over a preset or custom date range.
+- **Calendar** shows the predicted price on each upcoming trading session. Add tickers to compare one line per stock. In Research, expand the calculation details to see the stock’s recent returns, volatility, historical prediction error and the evidence behind its Buy and Risk scores.
 - **Watchlists** lets you create named lists, add tickers from Research, import a Symbol/Ticker CSV and set local price alerts.
 - **Portfolio** imports current Fidelity and other brokerage or bank statements from CSV, OFX or QFX. Preview mapped positions before applying a statement, or enter accounts, holdings and balances manually. Import a separate daily price CSV to chart your own history.
 - **Settings** controls the starting stock, display mode, theme, advanced trader tools, AI provider, model and optional key storage.
 
-![Switching among one day, five days, one month and two years on the Sandisk Future chart](docs/screenshots/future-periods.gif)
+![One-month Future charts for different stocks using each stock’s trading history](docs/screenshots/future-periods.gif)
 
-[View a generated AI forecast with a sourced fiscal-quarter marker](docs/screenshots/home-future.png)
+[View a generated prediction with Buy and Risk scores and a sourced event](docs/screenshots/home-future.png)
 
 [Multi-stock calendar preview](docs/screenshots/calendar.png)
 

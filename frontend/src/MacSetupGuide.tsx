@@ -143,7 +143,7 @@ export function MacSetupGuide({ close }: { close: () => void }) {
             <p>
               In <strong>Research</strong>, select a ticker, review the dated news and click{' '}
               <strong>Generate scores</strong>. Open the buy and risk reasons to check the cited
-              evidence. Open <strong>Forecast calendar</strong> for projected price ranges and
+              evidence. Looking up a stock generates its <strong>Future</strong> price line. Select a marker for an event’s date and source. Open <strong>Forecast calendar</strong> to compare stocks and explore
               sourced company or market events.
             </p>
             <p>

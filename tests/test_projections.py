@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
+from stockreplay import price_scenario
 from stockreplay import projections as forecast
 from stockreplay.api import create_app
 from stockreplay.trading_calendar import calendar
@@ -40,7 +41,13 @@ def test_uses_actual_close_calendar_and_anchored_one_day_path():
     data = history()
     close = data["bars"][-1]["raw_close"]
     row = projected(data, "1d")
-    assert row["points"][0] == {"date": "2026-11-27", "low": close, "median": close, "high": close}
+    assert row["points"][0] == {
+        "date": "2026-11-27",
+        "low": close,
+        "median": close,
+        "prediction": close,
+        "high": close,
+    }
     next_day = row["points"][1]
     assert (
         next_day["date"] == "2026-11-30"
@@ -72,7 +79,8 @@ def test_all_horizons_are_deterministic_and_share_a_prefix():
     longest = projected(data, "5y")
     assert longest["points"][-1]["date"] == "2031-11-26"  # Thanksgiving is closed.
     assert projected(data, "5y")["points"] == longest["points"]
-    assert projected(data, "1d", seed=43)["points"][1] != shortest[1]
+    assert projected(data, "5y", seed=43)["points"] == longest["points"]
+    assert projected({**data, "symbol": "ANOTHER"}, "5y")["points"] == longest["points"]
     assert len(longest["data_digest"]) == 64
 
 
@@ -89,7 +97,9 @@ def test_replay_ignores_later_bars_and_missing_sessions_do_not_create_returns():
     assert after["annualized_volatility_pct"] != observed["annualized_volatility_pct"]
 
 
-def test_unsupported_stale_short_and_flat_histories_return_per_symbol_errors(tmp_path, monkeypatch):
+def test_missing_prices_error_and_short_or_flat_histories_get_a_labelled_reference(
+    tmp_path, monkeypatch
+):
     app = create_app(tmp_path)
     desk = app.state.terminal.desk
 
@@ -123,14 +133,21 @@ def test_unsupported_stale_short_and_flat_histories_return_per_symbol_errors(tmp
         response = client.get(req, params=q)
         assert response.is_success, response.text
         payload = response.json()
-        assert [s["symbol"] for s in payload["series"]] == ["AAPL"]
-        assert [e["symbol"] for e in payload["errors"]] == [
-            "IPO",
-            "CLOSED",
-            "UNKNOWN",
-            "FLAT",
-            "BAD$",
-        ]
+        assert [s["symbol"] for s in payload["series"]] == ["AAPL", "IPO", "FLAT"]
+        assert [e["symbol"] for e in payload["errors"]] == ["CLOSED", "UNKNOWN", "BAD$"]
+        for reference in payload["series"][1:]:
+            assert reference["method"] == "Last-price reference"
+            assert reference["model_inputs"]["kind"] == "last_price_reference"
+            assert reference["model_inputs"]["reference_reason"] in reference["data_note"]
+            assert reference["validation_1d"]["tested_sessions"] == 0
+            assert reference["validation_1d"]["directional_accuracy_pct"] is None
+            for point in reference["points"]:
+                assert (
+                    point["prediction"]
+                    == point["low"]
+                    == point["high"]
+                    == reference["confirmed_close"]
+                )
         assert payload["series"][0]["as_of"] == AS_OF.isoformat()
         assert client.get(req, params={**q, "seed": -1}).status_code == 422
         assert client.get(req, params={**q, "horizon": "weekly-ish"}).status_code == 422
@@ -261,6 +278,101 @@ def test_key_free_endpoint_handles_every_period_and_cached_history(tmp_path, mon
             )
             assert len(row["points"]) >= 2 and row["points"][1]["date"] > "2026-11-27"
             if preset == "custom":
+                assert row["projected_sessions"] > len(row["points"]) - 1
                 assert row["requested_end"] == "2026-12-06" and [
                     p["date"] for p in row["points"][1:]
                 ] == ["2026-12-03", "2026-12-04"]
+
+
+def test_conditioning_distinguishes_rising_and_falling_histories_and_price_units():
+    noise = np.random.default_rng(91).normal(0, 0.002, size=400)
+
+    def series(drift):
+        return tuple(100 * np.exp(np.cumsum(noise + drift)))
+
+    rising, falling = series(0.002), series(-0.002)
+    up, _, inputs_up, *_ = price_scenario.scenario(rising, 35, 252)
+    down, _, inputs_down, *_ = price_scenario.scenario(falling, 35, 252)
+    assert inputs_up["regime"] == "Rising trend"
+    assert inputs_down["regime"] == "Falling trend"
+    assert up[-1, 1] > rising[-1]
+    assert down[-1, 1] < falling[-1]
+    scaled, *_ = price_scenario.scenario(tuple(p * 10 for p in rising), 35, 252)
+    np.testing.assert_allclose(scaled, up * 10, rtol=1e-10)
+
+
+def test_one_episode_cannot_vote_multiple_times_or_drive_unlimited_compounding():
+    n, horizon = 400, 75
+    # Closest states cluster in the same historical squeeze.
+    matches = price_scenario.similar_days(np.abs(np.arange(n) - 180), n - np.arange(n), horizon)
+    assert 180 in matches
+    assert all(abs(a - b) >= horizon for i, a in enumerate(matches) for b in matches[i + 1 :])
+    assert len(matches) <= n // horizon
+    noise = np.random.default_rng(7).normal(0, 0.016, size=n)
+    noise[140:160] += 0.12
+    closes = tuple(25 * np.exp(np.cumsum(noise)))
+    prices, _, inputs, *_ = price_scenario.scenario(closes, 2520, 252)
+    supported = inputs["matched_horizon_sessions"]
+    assert supported == (n - 1) // 4
+    assert 2 <= inputs["independent_horizon_matches"] <= n // supported
+    np.testing.assert_allclose(prices[supported:, 1], prices[supported - 1, 1])
+    assert np.isfinite(prices).all() and (prices > 0).all()
+
+
+def test_walk_forward_uses_only_known_outcomes_and_reports_flat_error_comparison():
+    returns = np.random.default_rng(18).normal(0, 0.02, size=380)
+    close = 120 * np.exp(np.cumsum(returns))
+    cutoff = 208
+    original = price_scenario.market_states(close[: cutoff + 1])
+    # A shock after the historical decision cannot change its fitted forecast.
+    close[cutoff + 1 :] *= 15
+    modified = price_scenario.market_states(close)
+    a, _ = price_scenario.fit_path(original, cutoff, 43)
+    b, _ = price_scenario.fit_path(modified, cutoff, 43)
+    np.testing.assert_allclose(a, b)
+    h, limit = 21, 3
+    result = price_scenario.walk_forward(modified, h, limit)
+    flat_errors = []
+    model_errors = []
+    for i in range(1, limit + 1):
+        end = len(close) - 1 - i * h
+        observed = close[end + h] / close[end]
+        fitted, _ = price_scenario.fit_path(price_scenario.market_states(close[: end + 1]), end, h)
+        flat_errors.append(100 * abs(observed - 1))
+        model_errors.append(100 * abs(observed - np.exp(fitted[-1, 1])))
+    assert result["tested_sessions"] == limit
+    assert result["flat_mae_pct"] == pytest.approx(np.mean(flat_errors))
+    assert result["model_mae_pct"] == pytest.approx(np.mean(model_errors))
+
+
+def test_single_observation_has_a_dated_reference_and_no_implied_volatility():
+    data = history()
+    data["bars"] = data["bars"][-1:]
+    row = projected(data, "1y")
+    assert len(row["points"]) > 245
+    assert row["model_inputs"]["kind"] == "last_price_reference"
+    assert row["annualized_volatility_pct"] is None
+    assert row["validation_252d"]["tested_sessions"] == 0
+    assert all(point["prediction"] == row["confirmed_close"] for point in row["points"])
+
+
+def test_cache_recovery_preserves_the_freshest_real_anchor_even_if_the_history_is_short():
+    from types import SimpleNamespace
+
+    fresh, old = history(n=2), history(n=320)
+    fresh["bars"] = fresh["bars"][-1:]
+    old["bars"].pop()
+    fresh_packet = {"data": fresh, "fetched": CLOSED.isoformat()}
+    old_packet = {"data": old, "fetched": CLOSED.isoformat()}
+    desk = SimpleNamespace(
+        chart=lambda *args: fresh_packet,
+        cache=SimpleNamespace(read=lambda key: old_packet),
+    )
+    current = forecast.load_projection(desk, "AAPL", "1d", 42, CLOSED)
+    assert current["confirmed_close_date"] == AS_OF.isoformat()
+    assert current["model_inputs"]["kind"] == "last_price_reference"
+    desk.chart = lambda *args: {"data": None, "error": "Offline."}
+    desk.cache.read = lambda key: fresh_packet
+    cached = forecast.load_projection(desk, "AAPL", "1d", 42, CLOSED)
+    assert cached["stale"] and cached["confirmed_close"] == current["confirmed_close"]
+    assert cached["model_inputs"]["kind"] == "last_price_reference"

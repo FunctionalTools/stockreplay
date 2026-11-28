@@ -68,12 +68,29 @@ def respond(request):
     if name == "connection_check":
         return completed({"result": "ready"})
     if name == "future_price_scenario":
-        fields=body["text"]["format"]["schema"]["properties"]
-        sid=fields["near"]["properties"]["source"]["enum"][0]
-        level={"tilt":"slightly_higher","source":sid}
-        result={"near":level,"middle":level,"longer":level,"drivers":[fields["drivers"]["items"]["enum"][0]]}
-        if "watch" in fields:result["watch"]=fields["watch"]["enum"][0]
-        if "quarters" in fields:result["quarters"]={k:v["enum"][0] for k,v in fields["quarters"]["properties"].items()}
+        fields = body["text"]["format"]["schema"]["properties"]
+        result = {
+            key: {
+                "tilt": "slightly_higher",
+                "source": fields[key]["properties"]["source"]["enum"][0],
+            }
+            for key in ("near", "middle", "longer")
+        }
+        result["drivers"] = [fields["drivers"]["items"]["enum"][0]]
+        if "scores" in fields:
+            score_fields = fields["scores"]["properties"]
+            result["scores"] = {
+                key: {"score": value, "reason": reason, "source": score_fields[key]["properties"]["source"]["enum"][0],
+                      "check":score_fields[key]["properties"]["check"]["enum"][-1]}
+                for key, value, reason in (
+                    ("buy", 72, "The issuer observation supports investment appeal."),
+                    ("risk", 67, "Observed uncertainty increases risk."),
+                )
+            }
+        if "watch" in fields:
+            result["watch"] = fields["watch"]["enum"][0]
+        if "quarters" in fields:
+            result["quarters"] = {key: spec["enum"][0] for key, spec in fields["quarters"]["properties"].items()}
         return completed(result)
     if name == "stock_scores":
         return completed(assessment(inputs))

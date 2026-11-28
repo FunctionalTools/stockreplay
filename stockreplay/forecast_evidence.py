@@ -8,6 +8,7 @@ from urllib.parse import quote
 import yfinance as yf
 
 from .desk import parallel, safe_url
+from .forecast_scores import observed_day
 from .market_events import market_events
 
 
@@ -100,7 +101,14 @@ def assemble(baseline, brief, agenda, consensus):
     sources = []
 
     def add(title, url, publisher, day, kind, detail, date_basis=None, **metadata):
-        if not safe_url(url):
+        if not (
+            safe_url(url)
+            and observed_day(day)
+            and isinstance(title, str)
+            and title.strip()
+            and isinstance(publisher, str)
+            and publisher.strip()
+        ):
             return None
         sid = "S" + str(len(sources) + 1)
         sources.append(
@@ -120,6 +128,12 @@ def assemble(baseline, brief, agenda, consensus):
 
     anchor = baseline["as_of"]
     last = baseline["points"][0]["median"]
+    volatility = baseline.get("annualized_volatility_pct")
+    volatility_note = (
+        f" Observed annualized volatility {volatility:.1f}%."
+        if volatility is not None
+        else " There were too few observed price changes to estimate volatility."
+    )
     add(
         baseline["symbol"] + " observed market prices",
         baseline.get("anchor_url") or baseline["url"],
@@ -131,8 +145,31 @@ def assemble(baseline, brief, agenda, consensus):
             if baseline.get("anchor_kind") == "intraday"
             else "Published daily close " + anchor
         )
-        + f" {last:.4g} {baseline['currency'] or ''}. Observed annualized volatility {baseline['annualized_volatility_pct']:.1f}%.",
+        + f" {last:.4g} {baseline['currency'] or ''}."
+        + volatility_note,
     )
+    features = baseline.get("model_inputs", {})
+    vol, draw = features.get("volatility_21d_pct"), features.get("drawdown_63d_pct")
+    if (
+        features.get("kind") != "last_price_reference"
+        and isinstance(vol, (int, float))
+        and isinstance(draw, (int, float))
+        and math.isfinite(vol)
+        and math.isfinite(draw)
+    ):
+        add(
+            baseline["symbol"] + " observed price risk",
+            baseline["url"],
+            baseline["source"],
+            baseline.get("confirmed_close_date") or anchor,
+            "risk",
+            f"21-session annualized price volatility {vol:.1f}%. Last observed close {abs(draw):.1f}% below its 63-session high.",
+            "close",
+            factor="price_risk",
+            measured_price_risk=True,
+            volatility_21d_pct=round(vol, 2),
+            drawdown_63d_pct=round(draw, 2),
+        )
     # Reserve context for each subject, including issuer filings and independent web/news coverage.
     counts = {}
     groups = {
@@ -154,10 +191,15 @@ def assemble(baseline, brief, agenda, consensus):
         "financials",
         "earnings",
         "growth",
+        "technical",
+        "analysts",
     }
     for e in brief.get("evidence", []):
         g = e.get("group")
-        if g not in groups or counts.get(g, 0) >= (
+        category = (
+            (g, e.get("factor")) if g in {"fundamentals", "risk", "estimates", "technical"} else g
+        )
+        if g not in groups or counts.get(category, 0) >= (
             2
             if g in {"company_news", "web_news", "ollama_web_news", "company_filings", "estimates"}
             else 1
@@ -173,12 +215,16 @@ def assemble(baseline, brief, agenda, consensus):
             g,
             e.get("excerpt") or e.get("text", ""),
             e.get("date_origin") or e.get("date_kind"),
+            original_id=e.get("id"),
+            factor=e.get("factor"),
+            stale=e.get("stale"),
+            period_end=e.get("period_end"),
             scope=e.get("scope"),
             discovered_via=e.get("discovered_via"),
             checked_at=e.get("checked_at") or e.get("checked"),
         )
         if sid:
-            counts[g] = counts.get(g, 0) + 1
+            counts[category] = counts.get(category, 0) + 1
 
     quarters = {
         f"Q{n}": {
@@ -268,3 +314,91 @@ def assemble(baseline, brief, agenda, consensus):
         )
         matches[0]["source_ids"].append(sid)
     return sources, quarters
+
+
+def local_forecast_sources(sources, quarters, scores):
+    """Give a small installed model a cross-section of the actual evidence. Keep the full archive."""
+    selected = {}
+    if scores:
+        required = set(scores["buy_source_ids"] + scores["risk_source_ids"])
+        selected.update((s["id"], s) for s in sources if s["id"] in required)
+    history = next((s for s in sources if s.get("measured_price_risk")), None)
+    if history:
+        selected[history["id"]] = history
+    for quarter in quarters.values():
+        consensus = [
+            s for s in sources if s["kind"] == "consensus" and s["id"] in quarter["source_ids"]
+        ]
+        if consensus:
+            source = max(consensus, key=lambda s: bool(s.get("comparison_available")))
+            selected[source["id"]] = source
+
+    def category(s):
+        if s.get("date_basis") == "event":
+            return "scheduled" if s["kind"] == "earnings" else s["kind"] + "_calendar"
+        if s["kind"] in {"price", "ollama_web_news"}:
+            return s["kind"]
+        return s.get("factor") or s["kind"]
+
+    # Select one fact per subject before taking a second article or quarterly estimate.
+    subjects = (
+        "price",
+        "ollama_web_news",
+        "company_news",
+        "filings",
+        "growth",
+        "price_risk",
+        "valuation",
+        "balance_sheet",
+        "targets",
+        "analysts",
+        "sector",
+        "governance",
+        "scheduled",
+        "web_news",
+        "regulatory_calendar",
+        "market",
+        "profitability",
+        "sensitivity",
+        "cash_flow",
+        "earnings",
+    )
+    for topic in subjects:
+        choices_ = [s for s in sources if category(s) == topic and s["id"] not in selected]
+        if not choices_:
+            continue
+        source = max(
+            choices_,
+            key=lambda s: (
+                s.get("scope") in {"Filing passage", "Article passage"},
+                s.get("discovered_via") == "Ollama Web Search",
+                bool(s.get("comparison_available")),
+                s["kind"] == "price" and "return" in s["title"].lower(),
+                s.get("date", ""),
+            ),
+        )
+        selected[source["id"]] = source
+        if len(selected) >= 16:
+            break
+    if not selected:
+        return sources[:16]
+    return list(selected.values())
+
+
+def local_source_row(source):
+    fact = source["excerpt"] or source["title"]
+    fact = re.sub(r"https?://\S+", "", fact).strip() or source["title"]
+    # Preserve exact magnitudes, units and comparison dates. Prefer one complete
+    # publisher sentence instead of repeating titles, URLs and retrieval metadata.
+    if source["kind"] == "consensus":
+        fact = source["excerpt"]
+    elif len(fact) > 185:
+        sentence = re.search(r"[.!?](?=\s|$)", fact[55:185])
+        fact = fact[: 55 + sentence.end()] if sentence else fact[:182].rsplit(" ", 1)[0] + "…"
+    return {
+        "id": source["id"],
+        "kind": source["kind"],
+        "date": source["date"][:10],
+        "fact": fact,
+        **{k: source[k] for k in ("scope", "date_basis", "discovered_via") if source.get(k)},
+    }

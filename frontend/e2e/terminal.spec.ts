@@ -25,7 +25,11 @@ test('key pasted in Settings generates and saves cited independent scores', asyn
   for (const name of ['Research', 'Watchlists', 'Portfolio']) {
     await expect(nav.getByRole('button', { name, exact: true })).toBeVisible()
   }
-  await expect(page.getByRole('link', { name: 'Forecast calendar' })).toBeVisible()
+  await expect(
+    page
+      .getByRole('region', { name: 'Price forecast' })
+      .getByRole('link', { name: 'Forecast calendar' }),
+  ).toBeVisible()
   await expect(page.getByRole('button', { name: 'Connect OpenAI' })).toBeVisible()
   await connect(page)
   await page.getByRole('button', { name: 'Research', exact: true }).click()
@@ -176,7 +180,7 @@ test('live public research displays dated news, analyst forecasts and market his
   page,
 }) => {
   test.skip(!live)
-  await page.goto('/#/research/AAPL')
+  await page.goto('/#/research/AAPL/range_6mo')
   await expect(page.getByRole('heading', { name: 'Analyst ratings' })).toBeVisible({
     timeout: 100000,
   })

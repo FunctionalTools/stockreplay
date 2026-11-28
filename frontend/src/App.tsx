@@ -2,11 +2,12 @@ import { useEffect, useRef, useState } from 'react'
 import { Bookmark, BriefcaseBusiness, ChartNoAxesCombined, Settings as Gear } from 'lucide-react'
 import { Research } from './Research'
 import { ForecastCalendar } from './ForecastCalendar'
-import { fromFutureFocus, futureHref } from './forecastSnapshot'
+import { invalidateForecastCache } from './useSavedForecast'
+import { fromFutureFocus, futureHref, selectedFuture } from './forecastSnapshot'
 import { calendarHref, calendarSelection, type CalendarSelection } from './forecastData'
 import { SearchStock } from './SearchStock'
 import { ResearchHome, type HomeContext } from './ResearchHome'
-import { validRangeFocus } from './priceRanges'
+import { fromFocus, validRangeFocus } from './priceRanges'
 import { useResource } from './deskCommon'
 import { Watchlists } from './Watch'
 import { HoldingsPage } from './Positions'
@@ -96,7 +97,7 @@ export default function App() {
       (page === 'Research' || page === 'Calendar') &&
       !route.symbol &&
       prefs.home_mode === 'portfolio' &&
-      !home &&
+      !home?.portfolio_symbol &&
       loadingHome)
   useEffect(() => {
     const reload = () => reloadHome()
@@ -109,18 +110,18 @@ export default function App() {
   }, [reloadHome])
   useEffect(() => {
     let active = true
-    void Promise.allSettled([api<Preferences>('/preferences'), api<Connection>('/ai')]).then(
-      ([p, c]) => {
+    void api<Preferences>('/preferences')
+      .then((p) => {
         if (!active) return
-        if (p.status === 'fulfilled') {
-          committed.current = p.value
-          setPrefs(p.value)
-        } else fail(errorText(p.reason))
-        if (c.status === 'fulfilled') connected(c.value)
-        else fail(errorText(c.reason))
-        setReady(true)
-      },
-    )
+        committed.current = p
+        setPrefs(p)
+      })
+      .catch((e) => {
+        if (active) fail(errorText(e))
+      })
+      .finally(() => {
+        if (active) setReady(true)
+      })
     const pop = () => {
       const next = readRoute()
       setRoute(next)
@@ -128,29 +129,42 @@ export default function App() {
       if (!next.focus) window.scrollTo(0, 0)
     }
     window.addEventListener('hashchange', pop)
+    window.addEventListener('stockreplay:forecast-inputs-changed', invalidateForecastCache)
     return () => {
       active = false
       window.removeEventListener('hashchange', pop)
+      window.removeEventListener('stockreplay:forecast-inputs-changed', invalidateForecastCache)
     }
   }, [])
   useEffect(() => {
     document.documentElement.dataset.mode = prefs.appearance
     document.documentElement.dataset.accent = prefs.accent
   }, [prefs])
+  const checkingSettings = page === 'Settings'
   useEffect(() => {
-    if (page !== 'Settings' || !ready) return
-    let active = true
-    void api<Connection>('/ai')
-      .then((value) => {
-        if (active) connected(value)
-      })
-      .catch((e) => {
-        if (active) fail(errorText(e))
-      })
-    return () => {
-      active = false
+    let request: AbortController
+    function readConnection() {
+      request?.abort()
+      request = new AbortController()
+      const { signal } = request
+      void api<Connection>('/ai', 'GET', undefined, signal)
+        .then((next) => {
+          if (!signal.aborted)
+            connected((current) =>
+              (current?.revision ?? 0) > (next.revision ?? 0) ? current : next,
+            )
+        })
+        .catch((e) => {
+          if (!signal.aborted && checkingSettings) fail(errorText(e))
+        })
     }
-  }, [page, ready])
+    readConnection()
+    window.addEventListener('focus', readConnection)
+    return () => {
+      request.abort()
+      window.removeEventListener('focus', readConnection)
+    }
+  }, [checkingSettings])
   function save(p: Partial<Preferences>) {
     if (p.home_symbol && !p.home_mode) p = { ...p, home_mode: 'ticker' }
     const id = ++writeId.current
@@ -167,17 +181,21 @@ export default function App() {
     writes.current = next.catch(() => {})
     return next
   }
-  function changeResearchChart(href: string) {
-    if (location.hash !== href) history.pushState(null, '', href)
+  function changeResearchChart(href: string, readOnly = false) {
+    const state = { ...history.state, stockreplayReadOnlyForecast: readOnly }
+    if (location.hash !== href) history.pushState(state, '', href)
+    else if (!!history.state?.stockreplayReadOnlyForecast !== readOnly)
+      history.replaceState(state, '', href)
     const next = readRoute()
     setRoute(next)
     setIntent((prev) => ({ kind: next.focus, seq: prev.seq + 1 }))
   }
-  function go(p: Page, s?: string, focus = '') {
+  function go(p: Page, s?: string, focus = '', readOnly = false) {
     const future = p === 'Research' ? fromFutureFocus(focus) : null
     if (future) {
       changeResearchChart(
         futureHref((s || symbol).toUpperCase(), future.preset, future.start, future.end),
+        readOnly,
       )
       return
     }
@@ -205,7 +223,12 @@ export default function App() {
   }
   function selectTicker(s: string) {
     void save({ home_mode: 'ticker', home_symbol: s }).catch((e) => fail(errorText(e)))
-    go('Research', s)
+    const previous = page === 'Research' ? fromFocus(route.focus) : null
+    const selection =
+      page === 'Research' && route.focus === 'future'
+        ? selectedFuture(route.query)
+        : { preset: previous && previous.preset !== 'custom' ? previous.preset : '6mo' }
+    changeResearchChart(futureHref(s, selection.preset, selection.start, selection.end))
   }
   function followHoldings() {
     void save({ home_mode: 'portfolio' }).catch((e) => fail(errorText(e)))
@@ -332,6 +355,7 @@ export default function App() {
             )}
             {page === 'Calendar' && (
               <ForecastCalendar
+                connection={connection}
                 selection={calendarSelection(symbol, route.query)}
                 change={changeCalendar}
               />
@@ -368,7 +392,7 @@ export default function App() {
         currentTab={route.tabId || undefined}
         symbol={symbol}
         connection={connection}
-        navigate={go}
+        navigate={(p, s, focus) => go(p, s, focus, true)}
         save={save}
         updated={() => {
           refresh((n) => n + 1)

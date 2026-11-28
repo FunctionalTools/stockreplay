@@ -25,7 +25,7 @@
 .fc-controls,
 .fc-plot-panel,
 .forecast-events,
-.fc-sources {
+.panel.fc-sources {
   padding: clamp(14px, 2.1vw, 25px);
   margin-bottom: 14px;
 }
@@ -45,7 +45,6 @@
 .fc-tickers,
 .fc-horizons .range,
 .forecast-events .range,
-.forecast-key,
 .forecast-playback,
 .fc-pager {
   display: flex;
@@ -106,28 +105,7 @@
 .forecast-chart {
   min-width: 0;
 }
-.forecast-key {
-  font-size: 0.75rem;
-  gap: 10px;
-  color: var(--muted);
-}
-.forecast-key span {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-}
-.forecast-key i {
-  width: 18px;
-  border-top: 2px solid var(--muted);
-}
-.forecast-key span:nth-child(2) i {
-  border-top-style: dashed;
-}
-.forecast-key span:nth-child(3) i {
-  height: 8px;
-  border: 1px solid var(--muted);
-  background: var(--soft);
-}
+
 .forecast-stage {
   position: relative;
   margin-top: 12px;
@@ -211,15 +189,11 @@
 .fc-popup .fc-pager {
   margin: 6px 0 0;
 }
-.fc-time-note,
 .fc-model-caption,
 .fc-sources p,
 .forecast-event-card p {
   color: var(--muted);
   font-size: 0.84rem;
-}
-.fc-time-note {
-  font-size: 0.73rem;
 }
 .forecast-playback {
   flex-wrap: nowrap;
@@ -407,9 +381,6 @@
   .fc-instruments form input {
     width: auto;
     flex: 1;
-  }
-  .forecast-key {
-    font-size: 0.7rem;
   }
   .forecast-playback {
     gap: 2px;

@@ -8,9 +8,15 @@ import {
   snapshotPath,
   type ForecastSnapshot,
 } from './forecastSnapshot'
-import { calendarHref, horizons, type Forecast, type Horizon } from './forecastData'
+import {
+  calendarHref,
+  horizons,
+  isLastPriceReference,
+  type Forecast,
+  type Horizon,
+} from './forecastData'
 import type { Selection } from './priceRanges'
-import { shortDay, tickerPattern } from './workspace'
+import { shortDay, tickerPattern, type Connection } from './workspace'
 import { ErrorBox } from './ui'
 
 export function extraSymbols(primary: string, query: string) {
@@ -24,11 +30,11 @@ export function extraSymbols(primary: string, query: string) {
     ),
   ].slice(0, 7)
 }
-type Receive = (symbol: string, f: ForecastSnapshot | null) => void
+type Receive = (symbol: string, f: ForecastSnapshot | null, confirmed: boolean) => void
 function ComparisonRow({
   symbol,
   selection,
-  ready,
+  connection,
   remove,
   remember,
   href,
@@ -37,15 +43,17 @@ function ComparisonRow({
   symbol: string
   base?: Forecast
   selection: Selection
-  ready: boolean
+  connection: Connection | null
   remove: () => void
   remember: Receive
   href: string
 }) {
-  const { forecast, busy, loading, error, generate } = useSavedForecast(
+  const { forecast, generated, busy, loading, error, generate } = useSavedForecast(
     snapshotPath(symbol, selection),
+    { connection, base },
   )
-  useEffect(() => remember(symbol, forecast), [symbol, forecast, remember])
+  const confirmed = !!generated && forecast?.id === generated.id
+  useEffect(() => remember(symbol, forecast, confirmed), [symbol, forecast, confirmed, remember])
   return (
     <li>
       <div>
@@ -54,7 +62,8 @@ function ComparisonRow({
         </a>
         <small>
           {forecast
-            ? providerName(forecast.provider) +
+            ? (isLastPriceReference(forecast) ? 'Last-price reference · AI research by ' : '') +
+              providerName(forecast.provider) +
               ' · ' +
               forecast.model +
               (base && !matchesProjection(forecast, base)
@@ -63,10 +72,18 @@ function ComparisonRow({
               shortDay(forecast.points.at(-1)?.date)
             : loading
               ? 'Checking saved forecast…'
-              : (base ? 'Statistical projection · ' : '') + 'No saved forecast for this period'}
+              : (isLastPriceReference(base)
+                  ? 'Last-price reference · '
+                  : base
+                    ? 'Price model · '
+                    : '') + 'No saved forecast for this period'}
         </small>
       </div>
-      <button className="btn small" disabled={busy || loading || !ready} onClick={generate}>
+      <button
+        className="btn small"
+        disabled={busy || loading || !connection?.configured}
+        onClick={generate}
+      >
         {busy
           ? 'Generating ' + symbol + '…'
           : (forecast ? 'Update ' : 'Generate ') + symbol + ' forecast'}
@@ -88,7 +105,7 @@ export function ForecastComparison({
   baselines,
   selection,
   change,
-  ready,
+  connection,
   remember,
 }: {
   primary: string
@@ -96,7 +113,7 @@ export function ForecastComparison({
   baselines: Forecast[]
   selection: Selection
   change: (symbols: string[]) => void
-  ready: boolean
+  connection: Connection | null
   remember: Receive
 }) {
   const [opened, open] = useState<boolean | null>(null),
@@ -172,7 +189,7 @@ export function ForecastComparison({
                   ...extras.filter((v) => v !== s),
                 ])}
                 selection={selection}
-                ready={ready}
+                connection={connection}
                 remember={remember}
                 remove={() => change(extras.filter((v) => v !== s))}
               />

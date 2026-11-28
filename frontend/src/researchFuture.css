@@ -57,14 +57,7 @@
 .fc-inline .forecast-stage {
   margin-top: 5px;
 }
-.fc-inline .forecast-key {
-  gap: 5px 10px;
-}
-.fc-inline .forecast-key .fc-baseline-key i {
-  border: 0;
-  border-top: 2px dotted var(--muted);
-  background: transparent;
-}
+
 .fc-inline .forecast-values {
   min-width: 0;
 }
@@ -249,13 +242,7 @@
 .future-inspected strong {
   color: var(--text);
 }
-.fc-inline .forecast-key .fc-event-key i {
-  width: 9px;
-  height: 9px;
-  border: 1px solid var(--accent);
-  border-radius: 50%;
-  background: var(--panel);
-}
+
 .future-events > summary {
   font-weight: 600;
 }
@@ -293,24 +280,19 @@
 .future-archive summary {
   cursor: pointer;
 }
-.fc-inline .forecast-key span:nth-child(2) i {
-  border-color: var(--accent);
+
+.prediction-score-evidence small {
+  display: block;
+  color: var(--muted);
+  margin-block: 3px;
 }
-.fc-inline .forecast-key span:nth-child(3) i {
-  border-color: var(--accent);
-  background: var(--accent-soft);
+.fc-source-grid dl > div {
+  display: flex;
+  gap: 0.6rem;
+  justify-content: space-between;
 }
-.fc-history-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  margin-left: auto;
-  font-size: 0.76rem;
-  color: var(--text);
-  cursor: pointer;
-}
-.fc-history-toggle input {
-  width: 14px;
-  height: 14px;
-  accent-color: var(--accent);
+.fc-source-grid dd {
+  margin: 0;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }

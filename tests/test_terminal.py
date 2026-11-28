@@ -454,9 +454,14 @@ def test_native_keychain_lifecycle(tmp_path, monkeypatch):
         client = research.OpenAIResearch(store, httpx.MockTransport(respond))
         key = "intercepted-macos-keychain-test-value"
         client.set(research.KeySettings(key=key, remember=True))
-        assert research.OpenAIResearch(store).credentials()[0] == key
+        reopened = research.OpenAIResearch(store)
+        saved_credentials = reopened.credentials()
+        assert saved_credentials[0] == key
+        assert reopened.status()["generation_ready"] and not reopened.status()["verified"]
+        reopened.require_verified_generation(*saved_credentials)
         assert client.forget()["configured"] is False
         assert kc.get_password(research.SERVICE, client.account) is None
+        assert not reopened.status()["generation_ready"]
     finally:
         subprocess.run(["security", "delete-keychain", path], check=True)
 

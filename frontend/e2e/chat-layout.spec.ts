@@ -218,7 +218,8 @@ test('a direct forecast command generates once, opens the requested period and k
   await receipt.click()
   await expect(page).toHaveURL(/#\/research\/AAPL\?view=future&range=1mo$/)
   await expect(page.getByRole('region', { name: 'Price forecast' })).toContainText(forecast.summary)
-  expect(generations).toEqual(['/api/desk/forecast/AAPL?range=1mo'])
+  expect(generations).toHaveLength(1)
+  expect(generations[0]).toMatch(/^\/api\/desk\/forecast\/AAPL\?range=1mo(?:&revision=\d+)?$/)
   expect(plans).toEqual([
     'Can you generate a forecast for AAPL?',
     'Open the saved 1M forecast for AAPL',
@@ -268,7 +269,7 @@ test('forecast questions preserve the requested horizon and a delayed AI reply l
     const path = page
       .getByRole('region', { name: 'Price forecast' })
       .locator('[data-symbol="MSFT"][data-forecast-model="statistical"]')
-    await expect(path.locator('[data-line="median"]')).toHaveAttribute('d', /^M.+L/)
+    await expect(path.locator('[data-line="prediction"]')).toHaveAttribute('d', /^M.+L/)
     await expect(path.locator('[data-forecast-end]')).toHaveAttribute(
       'data-forecast-end',
       /^\d{4}-\d{2}-\d{2}$/,
