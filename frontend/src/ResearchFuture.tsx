@@ -541,12 +541,14 @@ function ForecastResult({
 export function ResearchFuture({
   symbol,
   query,
+  changeChart,
   connection,
   settings,
   revision,
 }: {
   symbol: string
   query: string
+  changeChart: (href: string) => void
   connection: Connection | null
   settings: () => void
   revision: number
@@ -570,7 +572,7 @@ export function ResearchFuture({
   useEffect(() => edit(false), [query])
   const pick = (preset: string, a?: string, b?: string) => {
     edit(false)
-    window.location.hash = futureHref(symbol, preset, a, b, extras)
+    changeChart(futureHref(symbol, preset, a, b, extras))
   }
   const controls = (
     <>
@@ -645,13 +647,7 @@ export function ResearchFuture({
       selection={selection}
       extras={extras}
       changeExtras={(next) => {
-        window.location.hash = futureHref(
-          symbol,
-          selection.preset,
-          selection.start,
-          selection.end,
-          next,
-        )
+        changeChart(futureHref(symbol, selection.preset, selection.start, selection.end, next))
       }}
       connection={connection}
       settings={settings}

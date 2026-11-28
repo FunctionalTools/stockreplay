@@ -167,13 +167,18 @@ export default function App() {
     writes.current = next.catch(() => {})
     return next
   }
+  function changeResearchChart(href: string) {
+    if (location.hash !== href) history.pushState(null, '', href)
+    const next = readRoute()
+    setRoute(next)
+    setIntent((prev) => ({ kind: next.focus, seq: prev.seq + 1 }))
+  }
   function go(p: Page, s?: string, focus = '') {
     const future = p === 'Research' ? fromFutureFocus(focus) : null
     if (future) {
-      const hash = futureHref((s || symbol).toUpperCase(), future.preset, future.start, future.end)
-      if (location.hash !== hash) history.pushState(null, '', hash)
-      setRoute(readRoute())
-      setIntent((v) => ({ kind: 'future', seq: v.seq + 1 }))
+      changeResearchChart(
+        futureHref((s || symbol).toUpperCase(), future.preset, future.start, future.end),
+      )
       return
     }
     const next = {
@@ -321,6 +326,7 @@ export default function App() {
                   updateSeq={seq}
                   intent={intent}
                   query={route.query}
+                  changeChart={changeResearchChart}
                 />
               </>
             )}

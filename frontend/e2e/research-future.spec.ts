@@ -164,16 +164,54 @@ test('future horizons and custom future dates remain accessible in the main card
   })
   await card.getByLabel('Forecast start date').fill(a)
   await card.getByLabel('Forecast end date').fill(b)
+  let customRequests = 0
+  let allowCustom!: () => void
+  const gate = new Promise<void>((resolve) => {
+    allowCustom = resolve
+  })
+  const customRequest = (url: string) => {
+    const { pathname, searchParams } = new URL(url)
+    return (
+      pathname === '/api/desk/projections' &&
+      searchParams.get('symbols') === 'MSFT' &&
+      searchParams.get('horizon') === 'custom' &&
+      searchParams.get('start') === a &&
+      searchParams.get('end') === b
+    )
+  }
+  await page.route('**/api/desk/projections?*', async (route) => {
+    if (customRequest(route.request().url())) {
+      customRequests++
+      await gate
+    }
+    await route.continue()
+  })
+  const arriving = page.waitForResponse(
+    (r) => r.request().method() === 'GET' && customRequest(r.url()),
+  )
   await card.getByRole('button', { name: 'Apply dates' }).click()
   await expect(page).toHaveURL(new RegExp('range=custom&start=' + a + '&end=' + b + '$'))
-  await expect(
-    card.locator('[data-forecast-model="statistical"] [data-forecast-end]'),
-  ).toBeVisible()
-  await expect(card.getByText('Statistical median', { exact: true })).toBeVisible()
-  const projectedEnd = (await card
-    .locator('[data-forecast-end]')
-    .getAttribute('data-forecast-end'))!
+  const endpoint = card.locator('[data-forecast-model="statistical"] [data-forecast-end]')
+  try {
+    await expect(choices.getByRole('button', { name: 'Custom' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+    await expect(endpoint).toHaveCount(0)
+  } finally {
+    allowCustom()
+  }
+  const response = await arriving
+  expect(response.ok(), await response.text()).toBe(true)
+  const packet = await response.json()
+  const projected = packet.series.find((s: { symbol: string }) => s.symbol === 'MSFT')
+  expect(projected, JSON.stringify(packet.errors)).toBeTruthy()
+  expect([projected.requested_start, projected.requested_end]).toEqual([a, b])
+  const projectedEnd = projected.points.at(-1).date
   expect(projectedEnd >= a && projectedEnd <= b).toBe(true)
+  await expect(endpoint).toHaveAttribute('data-forecast-end', projectedEnd)
+  expect(customRequests).toBe(1)
+  await expect(card.getByText('Statistical median', { exact: true })).toBeVisible()
   await expect(card.locator('.forecast-marker').filter({ hasText: 'Q2' })).toBeVisible()
   expect(autoRequests).toHaveLength(0)
   await card.getByRole('button', { name: /Generate AI forecast|Update AI forecast/ }).click()

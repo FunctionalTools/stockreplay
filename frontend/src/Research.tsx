@@ -384,6 +384,7 @@ export function Research({
   onAdvanced,
   intent,
   query,
+  changeChart,
   updateSeq,
 }: {
   symbol: string
@@ -393,6 +394,7 @@ export function Research({
   onAdvanced: () => Promise<void>
   intent: Intent
   query: string
+  changeChart: (href: string) => void
   updateSeq: number
 }) {
   const eb = useResource<Brief>('/desk/brief/' + encodeURIComponent(symbol)),
@@ -516,6 +518,7 @@ export function Research({
           intent={intent}
           revision={revision}
           query={query}
+          changeChart={changeChart}
           connection={connection}
           settings={settings}
         />
@@ -544,7 +547,9 @@ export function Research({
             </p>
           )}
           {connection?.provider === 'ollama_cloud' && connection.generation_detail && (
-            <p role="status">{connection.generation_detail} <a href="#/settings">AI settings</a></p>
+            <p role="status">
+              {connection.generation_detail} <a href="#/settings">AI settings</a>
+            </p>
           )}
           {busy && connection?.provider === 'ollama' && (
             <p role="status">

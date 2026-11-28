@@ -36,6 +36,7 @@ export function ResearchRange({
   intent,
   revision,
   query,
+  changeChart,
   connection,
   settings,
 }: {
@@ -43,6 +44,7 @@ export function ResearchRange({
   intent: Intent
   revision: number
   query: string
+  changeChart: (href: string) => void
   connection: Connection | null
   settings: () => void
 }) {
@@ -77,7 +79,7 @@ export function ResearchRange({
   function chooseRange(next: Selection) {
     select(next)
     const focus = ['range', next.preset, next.start, next.end].filter(Boolean).join('_')
-    window.location.hash = '#/research/' + encodeURIComponent(symbol) + '/' + focus
+    changeChart('#/research/' + encodeURIComponent(symbol) + '/' + focus)
   }
   const data = p.data?.data,
     perf = data?.performance,
@@ -105,9 +107,8 @@ export function ResearchRange({
             aria-pressed={future}
             onClick={() => {
               if (!future)
-                window.location.hash = futureHref(
-                  symbol,
-                  selection.preset === 'custom' ? '6mo' : selection.preset,
+                changeChart(
+                  futureHref(symbol, selection.preset === 'custom' ? '6mo' : selection.preset),
                 )
             }}
           >
@@ -119,6 +120,7 @@ export function ResearchRange({
         <ResearchFuture
           symbol={symbol}
           query={query}
+          changeChart={changeChart}
           connection={connection}
           settings={settings}
           revision={revision}
