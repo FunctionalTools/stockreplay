@@ -123,6 +123,10 @@ def wired(tmp_path, monkeypatch):
                     out.update(
                         buy=controls.buy, risk=grade_label("risk", controls.risk), buy_source=sid
                     )
+                    out["buy_check"] = next(s for s in fields["buy_check"]["enum"] if s != sid)
+                    out["risk_check"] = next(
+                        s for s in fields["risk_check"]["enum"] if s != out["risk_source"]
+                    )
                 return out
             level = {"tilt": "higher", "source": event if controls.fail else sid}
             return {
@@ -794,3 +798,135 @@ def test_unavailable_price_risk_measurements_do_not_imply_extreme_risk(vol, draw
         "history": history,
     }
     assert score_conflicts(scores, "risk", rows, history) == []
+
+
+@pytest.mark.parametrize(
+    ("counter", "effect", "status"),
+    [
+        ("liquidity", "mitigates_risk", "reviewed"),
+        ("annual", "mitigates_risk", "unresolved"),
+        ("liquidity", "inconclusive", "unresolved"),
+    ],
+)
+def test_two_stressed_price_windows_need_a_distinct_mitigator_for_moderate_risk(
+    counter, effect, status
+):
+    from stockreplay.forecast_scores import audited_scores
+
+    def row(sid, kind, factor, text, **other):
+        return {
+            "id": sid,
+            "kind": kind,
+            "factor": factor,
+            "title": text,
+            "excerpt": text,
+            "date": "2026-11-27",
+            **other,
+        }
+
+    sources = [
+        row(
+            "recent",
+            "risk",
+            "price_risk",
+            "Volatility 155.7%, drawdown 63.8%.",
+            measured_price_risk=True,
+            volatility_21d_pct=155.7,
+            drawdown_63d_pct=-63.8,
+        ),
+        row(
+            "annual",
+            "risk",
+            "price_risk",
+            "Previous year volatility 113.37%, maximum drawdown 74.78%.",
+        ),
+        row(
+            "liquidity",
+            "fundamentals",
+            "balance_sheet",
+            "Company reported liquid assets exceeding its short-term debt.",
+        ),
+        row("target", "estimates", "targets", "An analyst published a higher price target."),
+    ]
+    initial = {
+        "symbol": "SNDK",
+        "origin": "forecast_model",
+        "buy_score": 55,
+        "risk_score": 50,
+        "buy_source_ids": ["liquidity", "target"],
+        "risk_source_ids": ["annual", "recent"],
+        "buy_reason": "Reported liquidity supports the case.",
+        "risk_reason": sources[1]["title"],
+    }
+    calls = []
+
+    class Review:
+        def structured(self, key, model, name, schema, prompt, inputs, budget):
+            assert name == "forecast_score_review" and set(inputs["items"]) == {"risk"}
+            assert "independent evidence" in inputs["items"]["risk"]["concern"][0]
+            assert len(schema["properties"]["risk"]["properties"]["rating"]["enum"]) == 101
+            calls.append(True)
+            return {
+                "risk": {
+                    "rating": "moderate_risk_50",
+                    "primary": "recent",
+                    "countercheck": counter,
+                    "countercheck_effect": effect,
+                }
+            }
+
+    result = audited_scores(initial, sources, Review(), (None, "local-test"))
+    assert len(calls) == 1 and result["risk_score"] == 50 and result["risk_status"] == status
+    assert result["reviews"]["risk"]["initial_source_ids"] == ["annual", "recent"]
+    if counter == "annual":
+        assert "risk_crosscheck_source_id" not in result
+    else:
+        assert result["risk_crosscheck_source_id"] == "liquidity"
+
+
+def test_standalone_risk_metrics_never_establish_price_direction():
+    from stockreplay import local_forecast
+
+    sources = [
+        {
+            "id": "S1",
+            "kind": "risk",
+            "factor": "governance",
+            "date": "2026-11-27",
+            "title": "ISS risk 7 of 10",
+        },
+        {
+            "id": "S2",
+            "kind": "risk",
+            "factor": "price_risk",
+            "date": "2026-11-27",
+            "title": "Annualized volatility 45%",
+        },
+        {
+            "id": "S3",
+            "kind": "price",
+            "anchor_observation": True,
+            "date": "2026-11-27",
+            "title": "Latest close",
+        },
+    ]
+    schema = forecasts.model_schema(sources, {}, need_scores=False)
+    fields = schema["properties"]
+    assert fields["near"]["properties"]["tilt"]["enum"] == ["near_baseline"]
+    assert all(
+        code.endswith("=")
+        for code in local_forecast.request_schema(schema)["properties"]["day"]["enum"]
+    )
+    bad = {k: {"source": "S1", "tilt": "slightly_higher"} for k in ("near", "middle", "longer")}
+    with pytest.raises(ValueError):
+        forecasts.validated({**bad, "drivers": ["S1_mixed"]}, sources, {}, schema)
+    issuer = {
+        "id": "S4",
+        "kind": "fundamentals",
+        "date": "2026-11-27",
+        "title": "Reported year-over-year revenue growth",
+    }
+    supported = forecasts.model_schema([*sources, issuer], {}, need_scores=False)["properties"]
+    for k in ("near", "middle", "longer"):
+        assert supported[k]["properties"]["source"]["enum"] == ["S4"]
+    assert forecasts.can_tilt({**sources[1], "comparison_available": True})

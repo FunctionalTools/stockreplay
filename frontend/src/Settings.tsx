@@ -29,6 +29,8 @@ function HostedAISettings({
   const ollama = provider === 'ollama_cloud'
   const endpoint = ollama ? '/ai/ollama-cloud' : '/openai'
   const defaultModel = ollama ? 'gpt-oss:20b' : 'gpt-4.1-mini'
+  const restored =
+    !!connection?.generation_ready && !connection.verified && !connection.generation_detail
   const [key, setKey] = useState(''),
     [model, setModel] = useState(connection?.model || defaultModel),
     [remember, setRemember] = useState(connection?.storage === 'macOS Keychain'),
@@ -37,7 +39,7 @@ function HostedAISettings({
     [candidateModels, setCandidateModels] = useState<{ id: string; label: string }[] | null>(null),
     [discovering, discover] = useState(false)
   const models = useResource<{ models: { id: string; label: string }[] }>(
-    endpoint + '/models' + (!ollama && connection?.verified ? '?discover=true' : ''),
+    endpoint + '/models' + (!ollama && (connection?.verified || restored) ? '?discover=true' : ''),
   )
   useEffect(() => {
     setModel(connection?.model || defaultModel)
@@ -236,7 +238,12 @@ function HostedAISettings({
       ) : ollama && connection?.configured ? (
         <div className="hosted-checks" role="status">
           <p>
-            <strong>Model generation</strong> · {connection.verified ? 'Verified' : 'Unverified'} ·{' '}
+            <strong>Model generation</strong> ·{' '}
+            {connection.verified
+              ? 'Verified'
+              : restored
+                ? 'Previously verified on this Mac'
+                : 'Unverified'} ·{' '}
             {connection.model}
           </p>
           {connection.generation_detail && <small>{connection.generation_detail}</small>}
@@ -248,11 +255,17 @@ function HostedAISettings({
         </div>
       ) : (
         connection?.configured && (
-          <p className="connection-state">
-            {connection.verified ? <Check size={15} /> : <KeyRound size={15} />}{' '}
-            {connection.verified ? 'Verified for generation' : 'Saved key · test to verify'} ·{' '}
-            {connection.model}
-          </p>
+          <>
+            <p className="connection-state">
+              {connection.verified || restored ? <Check size={15} /> : <KeyRound size={15} />}{' '}
+              {connection.verified
+                ? 'Verified for generation'
+                : restored
+                  ? 'Previously verified on this Mac'
+                  : 'Saved key · test to verify'} · {connection.model}
+            </p>
+            {connection.generation_detail && <small role="status">{connection.generation_detail}</small>}
+          </>
         )
       )}
       {note && <p role="status">{note}</p>}

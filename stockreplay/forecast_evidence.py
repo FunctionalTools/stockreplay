@@ -147,6 +147,7 @@ def assemble(baseline, brief, agenda, consensus):
         )
         + f" {last:.4g} {baseline['currency'] or ''}."
         + volatility_note,
+        anchor_observation=True,
     )
     features = baseline.get("model_inputs", {})
     vol, draw = features.get("volatility_21d_pct"), features.get("drawdown_63d_pct")

@@ -80,6 +80,13 @@ def can_tilt(source):
         source["kind"] == "company_filings" and source.get("scope") != "Filing passage"
     ):
         return False
+    if (
+        source["kind"] == "risk"
+        or source.get("anchor_observation")
+        or source.get("measured_price_risk")
+        or source.get("factor") in {"governance", "price_risk"}
+    ):
+        return bool(source.get("comparison_available"))
     return source["kind"] not in {"consensus", "estimates"} or bool(
         source.get("comparison_available")
     )
@@ -108,8 +115,11 @@ def quarter_sources(quarter, sources):
 
 def model_schema(sources, quarters, *, need_scores=True, quarter_consensus_only=False):
     signal = [s for s in sources if can_tilt(s)]
-    if not signal:
-        raise ValueError("No sourced price or financial evidence can support a forecast.")
+    directional = bool(signal)
+    if not directional:
+        signal = [s for s in sources if s.get("date_basis") != "event"]
+        if not signal:
+            raise ValueError("No sourced price or financial evidence can support a forecast.")
     issuer = [
         s
         for s in signal
@@ -131,7 +141,12 @@ def model_schema(sources, quarters, *, need_scores=True, quarter_consensus_only=
     # A spot quote establishes a starting price. Require issuer evidence for the
     # longer-term judgement whenever the report actually contains it.
     def level(rows):
-        return object_schema({"tilt": choices(*TILTS), "source": choices(*(s["id"] for s in rows))})
+        return object_schema(
+            {
+                "tilt": choices(*TILTS) if directional else choices("near_baseline"),
+                "source": choices(*(s["id"] for s in rows)),
+            }
+        )
 
     fields = {
         "near": level(signal),
@@ -191,7 +206,7 @@ def validated(answer, sources, quarters, schema):
         level = answer[name]
         if (
             set(level) != {"tilt", "source"}
-            or level["tilt"] not in TILTS
+            or level["tilt"] not in fields[name]["properties"]["tilt"]["enum"]
             or level["source"] not in fields[name]["properties"]["source"]["enum"]
         ):
             raise ValueError("The chosen source cannot support a directional checkpoint.")
@@ -783,7 +798,7 @@ class Forecasts:
 
 
 # Independently scored and cross-checked conditional-history forecasts.
-FORECAST_PROTOCOL_VERSION = 2
+FORECAST_PROTOCOL_VERSION = 3
 
 
 def input_fingerprint(base, sources, quarters, saved_score):

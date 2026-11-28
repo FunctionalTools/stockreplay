@@ -360,10 +360,29 @@ test('fiscal marker sources stay in view beside the selected date and below a na
       preview.getByRole('link', { name: 'Consensus · Analyst estimates' }),
     ).toHaveAttribute('href', evidence.url)
     await expect(links).toHaveCount(2)
-    const box = (await preview.boundingBox())!,
-      point = (await marker.boundingBox())!
-    if (width === 1440) expect(box.x + box.width).toBeLessThan(point.x)
-    else expect(box.y).toBeGreaterThan(point.y + point.height)
+    // Deferred data can move the chart between two separate boundingBox() calls.
+    // Compare both elements in the same frame and coordinate system.
+    const gaps = await marker.evaluate((button) => {
+      const stage = button.closest<HTMLElement>('.forecast-stage')!
+      const plot = stage.querySelector<HTMLElement>('.forecast-plot')!
+      const popup = stage.querySelector<HTMLElement>('.fc-popup')!
+      const point = button.getBoundingClientRect()
+      const box = popup.getBoundingClientRect()
+      if (popup.dataset.position === 'left') return [point.left - box.right]
+      const belowPlot = () =>
+        popup.getBoundingClientRect().top - plot.getBoundingClientRect().bottom
+      const natural = belowPlot()
+      // The mobile card must also stay in flow when its chart has a definite height.
+      // The same physical height can resolve percentage offsets differently on resize.
+      const priorHeight = stage.style.height
+      try {
+        stage.style.height = stage.getBoundingClientRect().height + 'px'
+        return [natural, belowPlot()]
+      } finally {
+        stage.style.height = priorHeight
+      }
+    })
+    for (const gap of gaps) expect(gap).toBeGreaterThan(0)
     await preview.scrollIntoViewIfNeeded()
     expect(await preview.evaluate((p) => p.scrollHeight - p.clientHeight)).toBeLessThanOrEqual(1)
     // A link can be 'visible' to Playwright while clipped by an overflow container.
@@ -426,7 +445,19 @@ test('rapid horizon changes discard late prices and a failed AI request preserve
   await choice.getByRole('button', { name: '1M', exact: true }).click()
   await expect(monthly).toHaveAttribute('data-forecast-end', monthEnd!)
   release()
-  await card.getByRole('button', { name: 'Generate AI forecast', exact: true }).click()
+  await expect(
+    card.getByText('The AI forecast is unavailable for this period.', { exact: false }),
+  ).toBeVisible()
+  const retry = page.waitForRequest((request) => {
+    const url = new URL(request.url())
+    return (
+      request.method() === 'POST' &&
+      url.pathname === '/api/desk/forecast/TSLA' &&
+      !url.searchParams.has('auto')
+    )
+  })
+  await card.getByRole('button', { name: 'Generate now', exact: true }).click()
+  await retry
   await expect(card).toContainText('The selected AI provider is unavailable.')
   await expect(monthly).toHaveAttribute('data-forecast-end', monthEnd!)
   await expect(card.locator('[data-forecast-model="statistical"] path')).toHaveCount(1)

@@ -158,8 +158,9 @@
 .fc-popup[data-position='right'] {
   right: 0;
 }
+/* In flow on narrow charts; the desktop overlay inset must not move the preview. */
 .fc-popup[data-position='below'] {
-  position: relative;
+  position: static;
   width: 100%;
   margin-top: 5px;
   box-shadow: none;

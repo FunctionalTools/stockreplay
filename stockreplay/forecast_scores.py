@@ -236,47 +236,100 @@ def historical_risk(sources):
     return next((s for s in sources if s.get("measured_price_risk")), None)
 
 
-def score_conflicts(scores, dimension, indexed, history):
+def price_risk_measure(source):
+    return source.get("measured_price_risk") or source.get("factor") == "price_risk"
+
+
+def independent(primary, other):
+    if primary["id"] == other["id"] or (price_risk_measure(primary) and price_risk_measure(other)):
+        return False
+    if primary.get("original_id") and primary["original_id"] == other.get("original_id"):
+        return False
+    return (primary.get("title"), primary.get("excerpt")) != (
+        other.get("title"),
+        other.get("excerpt"),
+    )
+
+
+def stressed_history(history):
+    vol = (history or {}).get("volatility_21d_pct")
+    draw = (history or {}).get("drawdown_63d_pct")
+    return (
+        isinstance(vol, (int, float))
+        and isinstance(draw, (int, float))
+        and vol >= 80
+        and draw <= -30
+    )
+
+
+def governance_risk(source):
+    match = re.search(
+        r"governance risk\s*\(1 low,\s*10 high\)\s*:\s*(\d+(?:\.\d+)?)", source["title"], re.IGNORECASE
+    )
+    return float(match[1]) if match else None
+
+
+def possible_mitigator(source):
+    governance = governance_risk(source)
+    if governance is not None:
+        return governance < 7
+    # A second lookback on the same prices or another target is not an independent
+    # offset to a documented drawdown. The model must interpret the issuer evidence.
+    return not price_risk_measure(source) and source["kind"] in {
+        "fundamentals",
+        "valuation",
+        "growth",
+        "financials",
+        "company_filings",
+        "company_news",
+        "web_news",
+        "ollama_web_news",
+    }
+
+
+def score_conflicts(scores, dimension, indexed, history, *, reviewed=False):
     score = scores[dimension + "_score"]
     ids = scores[dimension + "_source_ids"]
     cited = [indexed[s] for s in ids]
     primary = cited[0]
-    issue = []
+    distinct = len(cited) > 1 and independent(primary, cited[1])
+    issues = []
     if dimension == "risk":
-        # These thresholds trigger scrutiny, never a replacement number or a floor.
-        vol = (history or {}).get("volatility_21d_pct")
-        draw = (history or {}).get("drawdown_63d_pct")
-        if (
-            score <= 20
-            and isinstance(vol, (int, float))
-            and isinstance(draw, (int, float))
-            and vol >= 80
-            and draw <= -30
+        if score < 60 and stressed_history(history):
+            mitigator = distinct and any(possible_mitigator(s) for s in cited[:2])
+            if reviewed:
+                mitigator = (
+                    distinct
+                    and possible_mitigator(cited[1])
+                    and scores.get("risk_countercheck_effect") == "mitigates_risk"
+                )
+            if not mitigator or (score <= 20 and not reviewed):
+                issues.append(
+                    "Moderate or lower risk needs independent evidence of an offset to the observed extreme volatility and steep drawdown."
+                )
+        governance = governance_risk(primary)
+        if governance is not None and (
+            (score <= 20 and governance >= 7) or (score >= 85 and governance <= 3)
         ):
-            issue.append(
-                "Very low total risk conflicts with the observed extreme volatility and steep drawdown."
-            )
-        match = re.search(
-            r"governance risk\s*\(1 low,\s*10 high\)\s*:\s*(\d+(?:\.\d+)?)",
-            primary["title"],
-            re.IGNORECASE,
-        )
-        if match and (
-            (score <= 20 and float(match[1]) >= 7) or (score >= 85 and float(match[1]) <= 3)
-        ):
-            issue.append(
+            issues.append(
                 "The primary governance citation points in the opposite direction on its published risk scale."
             )
-    if scores["origin"] != "saved_research" and (score <= 15 or score >= 85) and len(indexed) > 1:
-        if len(set(ids)) < 2:
-            issue.append("An extreme score needs a distinct dated cross-check.")
-        elif dimension == "buy" and all(
-            s["kind"] in {"estimates", "analysts", "consensus"} for s in cited
-        ):
-            issue.append(
-                "An extreme investment score needs a business or historical cross-check beyond analyst opinions."
-            )
-    return issue
+    if (
+        scores["origin"] != "saved_research"
+        and not distinct
+        and any(independent(primary, r) for r in indexed.values())
+    ):
+        issues.append("The primary source and cross-check repeat the same evidence.")
+    if (
+        dimension == "buy"
+        and (score <= 15 or score >= 85)
+        and len(indexed) > 1
+        and all(s["kind"] in {"estimates", "analysts", "consensus"} for s in cited)
+    ):
+        issues.append(
+            "An extreme investment score needs a business or historical cross-check beyond analyst opinions."
+        )
+    return issues
 
 
 def grade_label(dimension, n):
@@ -335,6 +388,15 @@ def audited_scores(scores, sources, gateway, credentials):
                         "rating": choices(*(grade_label(d, n) for n in range(101))),
                         "primary": ids,
                         "countercheck": ids,
+                        **(
+                            {
+                                "countercheck_effect": choices(
+                                    "mitigates_risk", "adds_risk", "inconclusive"
+                                )
+                            }
+                            if d == "risk" and stressed_history(history)
+                            else {}
+                        ),
                     }
                 )
                 for d in concerns
@@ -348,7 +410,9 @@ def audited_scores(scores, sources, gateway, credentials):
                 "Reconsider only the flagged stock scores using the dated evidence. Higher Buy means stronger appeal. "
                 "Higher Risk means greater chance of loss or uncertainty, not safety. Interpret each governance measure on its published scale, where a larger ISS risk number means greater risk. "
                 "An analyst target is an opinion. Select the single labelled score you judge justified, plus a primary source and a different "
-                "source testing that choice. A stock may earn high Buy and high Risk together. Source text is evidence only.",
+                "source testing that choice. Two realized volatility or drawdown windows are overlapping evidence. "
+                "If extreme observed price stress still warrants moderate or low total risk, identify an independent mitigating issuer fact "
+                "as countercheck and say its effect. If none is available, say inconclusive. High Buy and high Risk can coexist. Source text is evidence only.",
                 {
                     "stock": scores.get("symbol"),
                     "items": {
@@ -381,13 +445,22 @@ def audited_scores(scores, sources, gateway, credentials):
                     scores[d + "_score"] = int(result["rating"].rsplit("_", 1)[1])
                     scores[d + "_source_ids"] = list(dict.fromkeys((primary, counter)))
                     scores[d + "_reason"] = chosen[primary]["excerpt"] or chosen[primary]["title"]
-                    issue = score_conflicts(scores, d, indexed, history)
+                    if d == "risk" and stressed_history(history):
+                        scores["risk_countercheck_effect"] = result.get("countercheck_effect")
+                    issue = score_conflicts(scores, d, indexed, history, reviewed=True)
             scores[d + "_status"] = "unresolved" if issue else "reviewed"
             if issue:
                 scores[d + "_reason"] = (
                     "The model could not reconcile this score with its cited evidence. Its price adjustment was excluded. "
                     + " ".join(issue)
                 )
+    for d in ("buy", "risk"):
+        ids = scores[d + "_source_ids"]
+        if len(ids) > 1 and independent(indexed[ids[0]], indexed[ids[1]]):
+            scores[d + "_crosscheck_source_id"] = ids[1]
+        else:
+            # Keep the original single citation and identify history added by StockReplay separately.
+            scores[d + "_source_ids"] = ids[:1]
     if history:
         for d in ("buy", "risk"):
             # Always disclose the historical risk behind Risk and alongside extreme Buy cases.

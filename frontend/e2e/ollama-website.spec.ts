@@ -158,3 +158,31 @@ test('hosted Ollama shows generation and search permissions independently', asyn
   await expect(input).toHaveValue('')
   expect(attempts).toEqual(['rejected-test-key', 'search-only-test-key'])
 })
+
+for (const provider of ['openai', 'ollama_cloud']) {
+  test(`Settings recognizes a restored ${provider} generation check`, async ({ page }) => {
+    const selected = provider === 'openai' ? 'gpt-4.1-mini' : model
+    await page.route('**/api/ai', (route) =>
+      route.fulfill({
+        json: {
+          provider,
+          model: selected,
+          configured: true,
+          verified: false,
+          verified_at: null,
+          generation_ready: true,
+          storage: 'macOS Keychain',
+          revision: 4,
+        },
+      }),
+    )
+    await page.route('**/models*', (route) =>
+      route.fulfill({ json: { models: [{ id: selected, label: selected }] } }),
+    )
+    await page.goto('/#/settings')
+    await expect(page.getByText(/Previously verified on this Mac/)).toBeVisible()
+    await expect(
+      page.getByText(/Saved key · test to verify|Model generation · Unverified/),
+    ).toHaveCount(0)
+  })
+}
