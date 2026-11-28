@@ -145,6 +145,32 @@ test('a direct forecast command generates once, opens the requested period and k
     if (req.method() === 'POST' && url.pathname.startsWith('/api/desk/forecast/'))
       generations.push(url.pathname + url.search)
   })
+  // Render the previous answer before its SQLite write is acknowledged, as can happen in Safari.
+  let acknowledge!: () => void
+  const held = new Promise<void>((resolve) => {
+    acknowledge = resolve
+  })
+  let waitingForReceipt = false
+  const plans: string[] = []
+  page.on('request', (req) => {
+    if (req.method() === 'POST' && new URL(req.url()).pathname === '/api/assistant')
+      plans.push(req.postDataJSON().messages.at(-1).text)
+  })
+  await page.route('**/api/assistant/chats/*', async (route) => {
+    const req = route.request()
+    if (
+      req.method() === 'PUT' &&
+      !waitingForReceipt &&
+      req
+        .postDataJSON()
+        .entries?.at(-1)
+        ?.links?.some((l: { focus?: string }) => l.focus === 'future')
+    ) {
+      waitingForReceipt = true
+      await held
+    }
+    return route.continue()
+  })
   await page.goto('/#/settings/MSFT')
   const open = page.getByRole('button', { name: 'Open assistant' })
   await open.click()
@@ -161,6 +187,15 @@ test('a direct forecast command generates once, opens the requested period and k
   expect(generations).toEqual([])
   await input.fill('Open the saved 1M forecast for AAPL')
   await input.press('Enter')
+  try {
+    await expect(
+      chat.getByText('Message queued. It will send after this reply is saved.'),
+    ).toBeVisible()
+    await input.press('Enter')
+    expect(plans).toEqual(['Can you generate a forecast for AAPL?'])
+  } finally {
+    acknowledge()
+  }
   await expect(page).toHaveURL(/#\/research\/AAPL\?view=future&range=1mo$/)
   await expect(chat.getByText('Opened Future on the price chart.')).toBeVisible()
   expect(generations).toEqual([])
@@ -184,4 +219,9 @@ test('a direct forecast command generates once, opens the requested period and k
   await expect(page).toHaveURL(/#\/research\/AAPL\?view=future&range=1mo$/)
   await expect(page.getByRole('region', { name: 'Price forecast' })).toContainText(forecast.summary)
   expect(generations).toEqual(['/api/desk/forecast/AAPL?range=1mo'])
+  expect(plans).toEqual([
+    'Can you generate a forecast for AAPL?',
+    'Open the saved 1M forecast for AAPL',
+    'Generate a 1M forecast for AAPL',
+  ])
 })

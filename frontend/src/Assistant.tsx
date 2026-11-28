@@ -110,7 +110,8 @@ export function Assistant({
   portfolioContext = false,
 }: Props) {
   const [open, setOpen] = useState(false),
-    [input, type] = useState(''),
+    [input, setInput] = useState(''),
+    [queued, setQueued] = useState<string | null>(null),
     [busy, wait] = useState(false),
     [phase, setPhase] = useState('Working'),
     [error, fail] = useState(''),
@@ -124,13 +125,33 @@ export function Assistant({
   const body = useRef<HTMLDivElement>(null),
     field = useRef<HTMLInputElement>(null),
     launcher = useRef<HTMLButtonElement>(null),
-    requestLock = useRef(false)
+    requestLock = useRef(false),
+    draft = useRef('')
   useEffect(() => {
     if (open && !menu) {
       body.current?.scrollTo({ top: body.current.scrollHeight })
       field.current?.focus({ preventScroll: true })
     }
   }, [open, menu, history.chat?.id, entries.length, busy])
+  function type(value: string) {
+    draft.current = value
+    setInput(value)
+  }
+  function submitDraft() {
+    const value = draft.current.trim()
+    if (!value || queued !== null || history.loading) return
+    if (requestLock.current) {
+      if (busy) setQueued(value)
+      return
+    }
+    void send(value)
+  }
+  useEffect(() => {
+    if (queued === null || busy || requestLock.current || history.loading) return
+    setQueued(null)
+    // If persistence failed, keep the draft editable. Never apply it on top of an unsaved turn.
+    if (!history.dirty) void send(queued)
+  }, [queued, busy, history.loading, history.dirty])
   function minimize() {
     setOpen(false)
     launcher.current?.focus()
@@ -806,7 +827,7 @@ export function Assistant({
     }
     throw Error('This action is unavailable. Try a more specific request.')
   }
-  async function send(message = input) {
+  async function send(message: string) {
     const value = message.trim()
     if (!value || requestLock.current || history.loading || history.dirty) return
     if (/\bsk-[\w-]{12,}/i.test(value)) {
@@ -913,7 +934,7 @@ export function Assistant({
           fail(errorText(saveError))
         }
       } else {
-        if (!history.current.current) type(value)
+        if (!history.current.current && !draft.current) type(value)
         fail(errorText(e))
       }
     } finally {
@@ -1199,7 +1220,7 @@ export function Assistant({
                 className="compose"
                 onSubmit={(e) => {
                   e.preventDefault()
-                  void send()
+                  submitDraft()
                 }}
               >
                 <input
@@ -1207,18 +1228,22 @@ export function Assistant({
                   aria-label="Message the assistant"
                   maxLength={3000}
                   value={input}
-                  disabled={history.dirty && !busy}
+                  disabled={history.loading || (history.dirty && !busy)}
+                  readOnly={queued !== null}
                   placeholder="Ask StockReplay…"
                   onChange={(e) => type(e.target.value)}
                 />
                 <button
                   aria-label="Send message"
-                  disabled={locked || history.dirty || !input.trim()}
+                  title={busy ? 'Send after this reply' : 'Send message'}
+                  disabled={history.loading || (history.dirty && !busy) || queued !== null || !input.trim()}
                 >
                   <ArrowUp size={17} />
                 </button>
               </form>
-              <small className="chat-privacy">Saved on this Mac · {connection?.provider === 'ollama_cloud' ? 'AI uses Ollama Cloud' : connection?.provider === 'openai' ? 'AI uses OpenAI' : 'AI runs locally with Ollama'}</small>
+              {queued !== null ? (
+                <small className="chat-privacy" role="status">Message queued. It will send after this reply is saved.</small>
+              ) : <small className="chat-privacy">Saved on this Mac · {connection?.provider === 'ollama_cloud' ? 'AI uses Ollama Cloud' : connection?.provider === 'openai' ? 'AI uses OpenAI' : 'AI runs locally with Ollama'}</small>}
             </>
           )}
         </section>
