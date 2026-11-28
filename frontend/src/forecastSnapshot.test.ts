@@ -47,6 +47,32 @@ it('uses the civil forecast horizon for sourced non-trading events and preserves
     ['2026-12-26', 'estimated', 'https://example.org/fiscal'],
   ])
   expect(modelEventMarkers(f).map((e) => e.id)).toEqual(['saved-AAPL-S1'])
+  const consensus = {
+    ...source,
+    id: 'estimate',
+    kind: 'consensus',
+    url: 'https://example.org/estimates',
+    source: 'Consensus publisher',
+  }
+  const article = {
+    ...source,
+    id: 'coverage',
+    kind: 'company_news',
+    url: 'https://example.org/news',
+    source: 'Research publisher',
+  }
+  f.sources.unshift(consensus, article)
+  f.quarters[0].source_ids = [article.id, 'S1', consensus.id]
+  f.quarters[0].consensus = [
+    { metric: 'EPS', value: 2.3, unit: 'USD', period: '2026-12-26', source_id: consensus.id },
+  ]
+  expect(quarterMarkers(f)[0].sources).toEqual([
+    { label: 'Fiscal date', publisher: source.source, url: source.url },
+    { label: 'Consensus', publisher: consensus.source, url: consensus.url },
+    { label: 'Forecast evidence', publisher: article.source, url: article.url },
+  ])
+  f.quarters[0].source_ids = [article.id, consensus.id]
+  expect(quarterMarkers(f)).toEqual([])
 })
 it('preserves assistant-selected and custom horizons on the homepage Future route', () => {
   const sel = fromFutureFocus('future_custom_2027-01-05_2027-01-20')!

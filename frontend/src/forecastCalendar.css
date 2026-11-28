@@ -128,18 +128,21 @@
   border: 1px solid var(--muted);
   background: var(--soft);
 }
-.forecast-plot {
+.forecast-stage {
   position: relative;
   margin-top: 12px;
+}
+.forecast-plot {
+  position: relative;
   min-width: 0;
 }
-.forecast-plot svg {
+.forecast-plot > svg {
   width: 100%;
   height: auto;
   display: block;
   overflow: visible;
 }
-.forecast-plot svg text {
+.forecast-plot > svg text {
   font: 12px var(--sans);
   fill: var(--muted);
 }
@@ -162,11 +165,8 @@
 }
 .fc-popup {
   position: absolute;
-  right: 1%;
-  bottom: 17%;
-  width: min(330px, 94%);
-  max-height: 230px;
-  overflow: auto;
+  bottom: 15%;
+  width: min(300px, 46%);
   z-index: 2;
   background: var(--panel);
   border: 1px solid var(--line);
@@ -174,10 +174,39 @@
   border-radius: 10px;
   padding: 10px 12px;
 }
+.fc-popup[data-position='left'] {
+  left: 0;
+}
+.fc-popup[data-position='right'] {
+  right: 0;
+}
+.fc-popup[data-position='below'] {
+  position: relative;
+  width: 100%;
+  margin-top: 5px;
+  box-shadow: none;
+}
 .fc-popup .fc-popup-close {
   float: right;
   width: 24px;
   height: 24px;
+  min-height: 24px;
+}
+.fc-event-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 12px;
+  margin-block: 5px;
+}
+.fc-event-sources .source-link svg {
+  flex: 0 0 12px;
+}
+.forecast-event-card.compact h3 {
+  margin: 2px 0;
+  font-size: 0.95rem;
+}
+.forecast-event-card.compact .source-link {
+  font-size: 0.76rem;
 }
 .fc-popup .fc-pager {
   margin: 6px 0 0;

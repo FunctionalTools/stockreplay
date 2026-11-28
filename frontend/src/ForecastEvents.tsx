@@ -20,14 +20,24 @@ export function EventCard({ event, compact = false }: { event: MarketEvent; comp
       <small>
         {event.symbols.length ? event.symbols.join(', ') : 'Market-wide'} · {event.kind}
       </small>
+      <div className="fc-event-sources" aria-label="Event sources">
+        {event.sources?.length ? (
+          event.sources.map((s) => (
+            <SourceLink key={s.label + s.url} url={s.url}>
+              {s.label} · {s.publisher}
+            </SourceLink>
+          ))
+        ) : (
+          <SourceLink url={event.url}>{event.source}</SourceLink>
+        )}
+      </div>
       {event.excerpt && <p>{event.excerpt}</p>}
       {event.relevance && (
         <p>
           <strong>Why it matters</strong> {event.relevance}
         </p>
       )}
-      <SourceLink url={event.url}>{event.source}</SourceLink>
-      {!compact && event.checked_at && <small> · Checked {shortDay(event.checked_at)}</small>}
+      {!compact && event.checked_at && <small>Checked {shortDay(event.checked_at)}</small>}
     </article>
   )
 }

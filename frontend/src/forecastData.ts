@@ -38,6 +38,11 @@ export type Projections = {
   series: Forecast[]
   errors: { symbol: string; error: string }[]
 }
+export type EventSource = {
+  label: 'Fiscal date' | 'Consensus' | 'Forecast evidence'
+  publisher: string
+  url: string
+}
 export type MarketEvent = {
   id: string
   date: string
@@ -51,6 +56,7 @@ export type MarketEvent = {
   excerpt: string
   relevance: string
   checked_at: string
+  sources?: EventSource[]
 }
 export type Events = {
   start: string

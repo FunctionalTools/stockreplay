@@ -54,7 +54,7 @@
 .fc-inline .forecast-chart-heading > div:first-child {
   display: none;
 }
-.fc-inline .forecast-plot {
+.fc-inline .forecast-stage {
   margin-top: 5px;
 }
 .fc-inline .forecast-key {
@@ -74,10 +74,6 @@
 .fc-inline .forecast-playback {
   margin: 4px 0;
   padding-block: 4px;
-}
-.fc-inline .fc-popup {
-  bottom: 14%;
-  max-height: 185px;
 }
 .future-outlook {
   border-top: 1px solid var(--line);

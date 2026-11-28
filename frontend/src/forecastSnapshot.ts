@@ -1,4 +1,4 @@
-import type { Forecast, MarketEvent } from './forecastData'
+import type { EventSource, Forecast, MarketEvent } from './forecastData'
 import { fromFocus, rangePresets, validDay, type Selection } from './priceRanges'
 
 export type ForecastSource = {
@@ -85,9 +85,10 @@ export const providerName = (id?: string) =>
 export function quarterMarkers(f: ForecastSnapshot): MarketEvent[] {
   const end = f.requested_end || f.points.at(-1)?.date || f.as_of
   return f.quarters.flatMap((q) => {
-    const source = q.source_ids
-      .map((id) => f.sources.find((s) => s.id === id))
-      .find((s) => s && /^https?:\/\//i.test(s.url))
+    const consensusIds = new Set((q.consensus || []).map((c) => c.source_id))
+    const quarterIds = new Set([...q.source_ids, ...consensusIds])
+    const cited = f.sources.filter((s) => quarterIds.has(s.id) && /^https?:\/\//i.test(s.url))
+    const source = cited.find((s) => s.kind === 'fiscal' && s.date === q.date)
     if (
       !q.date ||
       q.date_kind !== 'period_end' ||
@@ -97,6 +98,16 @@ export function quarterMarkers(f: ForecastSnapshot): MarketEvent[] {
       (f.range === 'custom' && f.requested_start && q.date < f.requested_start)
     )
       return []
+    const sources: EventSource[] = [
+      { label: 'Fiscal date', publisher: source.source, url: source.url },
+    ]
+    for (const s of cited) {
+      if (s.kind === 'fiscal') continue
+      const label =
+        consensusIds.has(s.id) || s.kind === 'consensus' ? 'Consensus' : 'Forecast evidence'
+      if (!sources.some((link) => link.label === label && link.url === s.url))
+        sources.push({ label, publisher: s.source, url: s.url })
+    }
     return [
       {
         id: 'forecast-' + f.symbol + '-' + q.quarter,
@@ -108,7 +119,8 @@ export function quarterMarkers(f: ForecastSnapshot): MarketEvent[] {
         source: source.source,
         url: source.url,
         excerpt: q.expectation,
-        relevance: 'Model outlook for this fiscal period. ' + (q.period || ''),
+        sources,
+        relevance: '',
         checked_at: f.created,
       },
     ]

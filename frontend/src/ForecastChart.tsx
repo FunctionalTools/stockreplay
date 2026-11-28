@@ -297,145 +297,152 @@ export function ForecastChart({
         </div>
       </div>
       <div
-        className="forecast-plot"
+        className="forecast-stage"
         onKeyDown={(e) => {
           if (e.key === 'Escape') setPopup(null)
         }}
       >
-        <svg
-          viewBox={'0 0 ' + W + ' ' + H}
-          role="img"
-          aria-label={
-            series.map((s) => s.symbol).join(' and ') +
-            ' observed history, median forecast, upper and lower simulated prices'
-          }
-        >
-          <rect
-            x={split}
-            y={T}
-            width={W - R - split}
-            height={B - T}
-            fill="var(--soft)"
-            opacity=".55"
-          />
-          {[0, 1, 2, 3, 4].map((i) => {
-            const value = bottom + ((top - bottom) * i) / 4
-            return (
-              <g key={i}>
-                <line x1={L} x2={W - R} y1={y(value)} y2={y(value)} className="fc-grid" />
-                <text x={L - 8} y={y(value) + 4} textAnchor="end">
-                  {axis(value)}
-                </text>
-              </g>
-            )
-          })}
-          {lines.map((l) => (
-            <g key={l.s.symbol} stroke={l.color} fill="none" data-symbol={l.s.symbol}>
-              <path d={l.band} fill={l.color} fillOpacity=".10" stroke="none" />
-              <path data-line="lower" d={l.low} opacity=".65" strokeWidth="1" />
-              <path data-line="upper" d={l.high} opacity=".65" strokeWidth="1" />
-              <path data-line="actual" d={l.historical} strokeWidth="2" />
-              {l.baseline && (
-                <path
-                  data-line="baseline"
-                  d={l.baseline}
-                  stroke={compare ? l.color : 'var(--muted)'}
-                  opacity={compare ? 0.64 : 1}
-                  strokeDasharray="2 4"
-                  strokeWidth="1.8"
-                />
-              )}
-              {l.points.length === 1 && (
-                <line
-                  x1={x(l.points[0].date)}
-                  x2={x(l.points[0].date)}
-                  y1={y(l.points[0].low)}
-                  y2={y(l.points[0].high)}
-                  strokeWidth="2.5"
-                />
-              )}
-              {compact && l.points.at(-1) && (
-                <circle
-                  cx={x(l.points.at(-1)!.date)}
-                  cy={y(l.points.at(-1)!.value)}
-                  r="2.8"
-                  fill={l.color}
-                />
-              )}
-              <path data-line="median" d={l.median} strokeDasharray="5 4" strokeWidth="2.4" />
-            </g>
-          ))}
-          <line x1={split} x2={split} y1={T} y2={B} stroke="var(--muted)" strokeDasharray="2 4" />
-          <text x={L} y="15">
-            {W < 570 ? 'History' : 'Observed history'}
-          </text>
-          <text x={split + 7} y="15">
-            Forecast
-          </text>
-          <line
-            x1={x(position)}
-            x2={x(position)}
-            y1={T}
-            y2={B + 3}
-            stroke="var(--text)"
-            opacity=".65"
-          />
-          <text x={L} y={H - 4}>
-            {shortDay(first)}
-          </text>
-          {W > 570 && (
-            <text x={split} y={H - 4} textAnchor="middle">
-              {shortDay(anchor)}
-            </text>
-          )}
-          <text x={W - R} y={H - 4} textAnchor="end">
-            {shortDay(last)}
-          </text>
-          <rect
-            x={L}
-            y={T}
-            width={W - R - L}
-            height={B - T}
-            fill="transparent"
-            onPointerDown={() => setPopup(null)}
-            onPointerMove={(e) => {
-              if (playing || e.pointerType === 'touch') return
-              const svg = e.currentTarget.ownerSVGElement!
-              const point = svg.createSVGPoint()
-              point.x = e.clientX
-              point.y = e.clientY
-              const matrix = svg.getScreenCTM()
-              if (!matrix) return
-              const px = point.matrixTransform(matrix.inverse()).x
-              choose(nearestDate(px))
-            }}
-          />
-        </svg>
-        {markers.map((m) => (
-          <button
-            key={m.events[0].id}
-            className="forecast-marker"
-            style={{ left: (Math.min(W - 24, m.x) / W) * 100 + '%' }}
-            data-kind={m.events[0].kind}
-            title={m.events.map((e) => e.title).join(' · ')}
+        <div className="forecast-plot">
+          <svg
+            viewBox={'0 0 ' + W + ' ' + H}
+            role="img"
             aria-label={
-              m.events.length === 1
-                ? m.events[0].title
-                : m.events.length + ' events from ' + shortDay(m.events[0].date)
+              series.map((s) => s.symbol).join(' and ') +
+              ' observed history, median forecast, upper and lower simulated prices'
             }
-            onMouseEnter={() => openEvents(m.events)}
-            onFocus={() => openEvents(m.events)}
-            onClick={() => {
-              setDay(m.events[0].date)
-              openEvents(m.events)
-            }}
           >
-            {markerLabel(m.events[0])}
-            {m.events.length > 1 && <sup>+{m.events.length - 1}</sup>}
-          </button>
-        ))}
+            <rect
+              x={split}
+              y={T}
+              width={W - R - split}
+              height={B - T}
+              fill="var(--soft)"
+              opacity=".55"
+            />
+            {[0, 1, 2, 3, 4].map((i) => {
+              const value = bottom + ((top - bottom) * i) / 4
+              return (
+                <g key={i}>
+                  <line x1={L} x2={W - R} y1={y(value)} y2={y(value)} className="fc-grid" />
+                  <text x={L - 8} y={y(value) + 4} textAnchor="end">
+                    {axis(value)}
+                  </text>
+                </g>
+              )
+            })}
+            {lines.map((l) => (
+              <g key={l.s.symbol} stroke={l.color} fill="none" data-symbol={l.s.symbol}>
+                <path d={l.band} fill={l.color} fillOpacity=".10" stroke="none" />
+                <path data-line="lower" d={l.low} opacity=".65" strokeWidth="1" />
+                <path data-line="upper" d={l.high} opacity=".65" strokeWidth="1" />
+                <path data-line="actual" d={l.historical} strokeWidth="2" />
+                {l.baseline && (
+                  <path
+                    data-line="baseline"
+                    d={l.baseline}
+                    stroke={compare ? l.color : 'var(--muted)'}
+                    opacity={compare ? 0.64 : 1}
+                    strokeDasharray="2 4"
+                    strokeWidth="1.8"
+                  />
+                )}
+                {l.points.length === 1 && (
+                  <line
+                    x1={x(l.points[0].date)}
+                    x2={x(l.points[0].date)}
+                    y1={y(l.points[0].low)}
+                    y2={y(l.points[0].high)}
+                    strokeWidth="2.5"
+                  />
+                )}
+                {compact && l.points.at(-1) && (
+                  <circle
+                    cx={x(l.points.at(-1)!.date)}
+                    cy={y(l.points.at(-1)!.value)}
+                    r="2.8"
+                    fill={l.color}
+                  />
+                )}
+                <path data-line="median" d={l.median} strokeDasharray="5 4" strokeWidth="2.4" />
+              </g>
+            ))}
+            <line x1={split} x2={split} y1={T} y2={B} stroke="var(--muted)" strokeDasharray="2 4" />
+            <text x={L} y="15">
+              {W < 570 ? 'History' : 'Observed history'}
+            </text>
+            <text x={split + 7} y="15">
+              Forecast
+            </text>
+            <line
+              x1={x(position)}
+              x2={x(position)}
+              y1={T}
+              y2={B + 3}
+              stroke="var(--text)"
+              opacity=".65"
+            />
+            <text x={L} y={H - 4}>
+              {shortDay(first)}
+            </text>
+            {W > 570 && (
+              <text x={split} y={H - 4} textAnchor="middle">
+                {shortDay(anchor)}
+              </text>
+            )}
+            <text x={W - R} y={H - 4} textAnchor="end">
+              {shortDay(last)}
+            </text>
+            <rect
+              x={L}
+              y={T}
+              width={W - R - L}
+              height={B - T}
+              fill="transparent"
+              onPointerDown={() => setPopup(null)}
+              onPointerMove={(e) => {
+                if (playing || e.pointerType === 'touch') return
+                const svg = e.currentTarget.ownerSVGElement!
+                const point = svg.createSVGPoint()
+                point.x = e.clientX
+                point.y = e.clientY
+                const matrix = svg.getScreenCTM()
+                if (!matrix) return
+                const px = point.matrixTransform(matrix.inverse()).x
+                choose(nearestDate(px))
+              }}
+            />
+          </svg>
+          {markers.map((m) => (
+            <button
+              key={m.events[0].id}
+              className="forecast-marker"
+              style={{ left: (Math.min(W - 24, m.x) / W) * 100 + '%' }}
+              data-kind={m.events[0].kind}
+              title={m.events.map((e) => e.title).join(' · ')}
+              aria-label={
+                m.events.length === 1
+                  ? m.events[0].title
+                  : m.events.length + ' events from ' + shortDay(m.events[0].date)
+              }
+              onMouseEnter={() => openEvents(m.events)}
+              onFocus={() => openEvents(m.events)}
+              onClick={() => {
+                setDay(m.events[0].date)
+                openEvents(m.events)
+              }}
+            >
+              {markerLabel(m.events[0])}
+              {m.events.length > 1 && <sup>+{m.events.length - 1}</sup>}
+            </button>
+          ))}
+        </div>
         {popup && (
-          <div className="fc-popup" role="region" aria-label="Timeline event preview">
+          <div
+            className="fc-popup"
+            data-position={W < 540 ? 'below' : x(popup[0].date) < W / 2 ? 'right' : 'left'}
+            role="region"
+            aria-label="Timeline event preview"
+          >
             <button
               className="icon-btn fc-popup-close"
               aria-label="Close event preview"

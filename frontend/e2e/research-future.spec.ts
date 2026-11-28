@@ -57,7 +57,7 @@ test('the homepage price card generates and reopens a cited future forecast on e
   const marker = card.locator('.forecast-marker').first()
   await marker.focus()
   const preview = card.getByRole('region', { name: 'Timeline event preview' })
-  await expect(preview.getByRole('link')).toHaveAttribute('href', /^https:\/\//)
+  await expect(preview.getByRole('link').first()).toHaveAttribute('href', /^https:\/\//)
   await marker.press('Escape')
   await page.reload()
   await expect(card.getByRole('button', { name: 'Update forecast' })).toBeVisible()
@@ -194,4 +194,90 @@ test('homepage forecast comparisons wait for explicit generation and stay in the
     'href',
     /calendar\/AMD/,
   )
+})
+
+test('fiscal marker sources stay in view beside the selected date and below a narrow chart', async ({
+  page,
+  request,
+}) => {
+  test.skip(process.env.STOCKREPLAY_LIVE_TESTS === '1')
+  await connect(request)
+  // Keep the real projection shape and cover a quarter with a long estimate and a separate fiscal calendar.
+  const result = await request.post('/api/desk/forecast/AAPL?range=1mo')
+  expect(result.ok(), await result.text()).toBe(true)
+  const { forecast } = await result.json()
+  const end = forecast.points.at(-1).date
+  const fiscal = {
+    id: 'calendar',
+    source: 'Issuer calendar',
+    kind: 'fiscal',
+    date: end,
+    date_basis: 'event',
+    title: 'Q1 period end',
+    url: 'https://example.org/test/issuer-calendar',
+  }
+  const evidence = {
+    id: 'eps',
+    source: 'Analyst estimates',
+    kind: 'consensus',
+    date: forecast.as_of,
+    date_basis: 'retrieved',
+    title: 'Published EPS consensus',
+    url: 'https://example.org/test/earnings-estimates',
+  }
+  forecast.sources = [evidence, fiscal]
+  forecast.quarters = [
+    {
+      quarter: 'Q1',
+      date: end,
+      period: 'Q1',
+      date_kind: 'period_end',
+      timing: 'estimated',
+      expectation: 'Published analyst estimate for this fiscal period. '.repeat(25),
+      source_ids: [evidence.id, fiscal.id],
+      consensus: [
+        { metric: 'EPS', value: 2.5, unit: 'USD per share', period: end, source_id: evidence.id },
+      ],
+    },
+  ]
+  forecast.drivers = []
+  await page.route('**/api/desk/forecast/AAPL?*', (route) => route.fulfill({ json: { forecast } }))
+  await page.route('**/api/desk/events?*', (route) =>
+    route.fulfill({ json: { events: [], gaps: [] } }),
+  )
+  await page.goto('/#/research/AAPL?view=future&range=1mo')
+  const card = page.getByRole('region', { name: 'Price forecast', exact: true })
+  const marker = card.getByRole('button', { name: 'AAPL Q1 fiscal period end' })
+  const preview = card.getByRole('region', { name: 'Timeline event preview' })
+  const links = preview.getByRole('link')
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 960 })
+    await marker.click()
+    await expect(preview).toHaveAttribute('data-position', width === 1440 ? 'left' : 'below')
+    await expect(
+      preview.getByRole('link', { name: 'Fiscal date · Issuer calendar' }),
+    ).toHaveAttribute('href', fiscal.url)
+    await expect(
+      preview.getByRole('link', { name: 'Consensus · Analyst estimates' }),
+    ).toHaveAttribute('href', evidence.url)
+    await expect(links).toHaveCount(2)
+    const box = (await preview.boundingBox())!,
+      point = (await marker.boundingBox())!
+    if (width === 1440) expect(box.x + box.width).toBeLessThan(point.x)
+    else expect(box.y).toBeGreaterThan(point.y + point.height)
+    await preview.scrollIntoViewIfNeeded()
+    expect(await preview.evaluate((p) => p.scrollHeight - p.clientHeight)).toBeLessThanOrEqual(1)
+    // A link can be 'visible' to Playwright while clipped by an overflow container.
+    // Hit-test both centers before scrolling inside the preview.
+    for (const link of await links.all()) {
+      expect(
+        await link.evaluate((a) => {
+          const b = a.getBoundingClientRect()
+          return a.contains(document.elementFromPoint(b.x + b.width / 2, b.y + b.height / 2))
+        }),
+      ).toBe(true)
+    }
+    await expect(preview).not.toContainText('Why it matters')
+    await marker.press('Escape')
+  }
 })
