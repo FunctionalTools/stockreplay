@@ -392,6 +392,41 @@ function ForecastResult({
           </div>
         )}
       </div>
+      {controls}
+      <div className="future-toolbar">
+        <div className="future-generate">
+          <button
+            className="btn primary"
+            onClick={generate}
+            disabled={busy || !connection?.configured || (loading && !saved)}
+          >
+            <Sparkles size={14} />
+            {busy
+              ? 'Generating AI forecast…'
+              : saved
+                ? 'Update AI forecast'
+                : 'Generate AI forecast'}
+          </button>
+          {connection?.configured ? (
+            <small>
+              {providerName(connection.provider)} · {connection.model}
+            </small>
+          ) : (
+            <button className="text-btn" onClick={settings}>
+              Set up a forecast model
+            </button>
+          )}
+        </div>
+        <ForecastComparison
+          primary={symbol}
+          extras={extras}
+          selection={selection}
+          change={changeExtras}
+          ready={!!connection?.configured}
+          baselines={projections.data?.series || []}
+          remember={remember}
+        />
+      </div>
       {point && line && anchor && (
         <div className="future-estimate" aria-label="Projection values">
           <strong>
@@ -432,41 +467,6 @@ function ForecastResult({
           </span>
         </div>
       )}
-      {controls}
-      <div className="future-toolbar">
-        <div className="future-generate">
-          <button
-            className="btn primary"
-            onClick={generate}
-            disabled={busy || !connection?.configured || (loading && !saved)}
-          >
-            <Sparkles size={14} />
-            {busy
-              ? 'Generating AI forecast…'
-              : saved
-                ? 'Update AI forecast'
-                : 'Generate AI forecast'}
-          </button>
-          {connection?.configured ? (
-            <small>
-              {providerName(connection.provider)} · {connection.model}
-            </small>
-          ) : (
-            <button className="text-btn" onClick={settings}>
-              Set up a forecast model
-            </button>
-          )}
-        </div>
-        <ForecastComparison
-          primary={symbol}
-          extras={extras}
-          selection={selection}
-          change={changeExtras}
-          ready={!!connection?.configured}
-          baselines={projections.data?.series || []}
-          remember={remember}
-        />
-      </div>
       {connection?.generation_detail && !connection.verified && (
         <p className="future-status">
           {connection.generation_detail}{' '}

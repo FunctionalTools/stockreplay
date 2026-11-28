@@ -551,3 +551,55 @@ test('one-session forecasts fill the plot between the observed anchor and the es
   await expect(plot.locator('[data-observed-anchor]')).toBeVisible()
   expect((await geometry()).smallestAxisValue).toBe(0)
 })
+
+for (const width of [390, 1440]) {
+  test(
+    'Compare forecasts stays under the pointer when prices arrive at ' + width + 'px',
+    async ({ page, request }) => {
+      test.skip(process.env.STOCKREPLAY_LIVE_TESTS === '1')
+      await connect(request)
+      let releaseProjection!: () => void
+      const gate = new Promise<void>((resolve) => {
+        releaseProjection = resolve
+      })
+      const initialProjection = (url: string) => {
+        const { pathname, searchParams } = new URL(url)
+        return (
+          pathname === '/api/desk/projections' &&
+          searchParams.get('symbols') === 'AMD' &&
+          searchParams.get('horizon') === '1mo'
+        )
+      }
+      await page.route('**/api/desk/projections?*', async (route) => {
+        if (initialProjection(route.request().url())) await gate
+        await route.continue()
+      })
+      await page.setViewportSize({ width, height: 960 })
+      await page.goto('/#/research/AMD?view=future&range=1mo')
+      const card = page.getByRole('region', { name: 'Price forecast', exact: true })
+      const compare = card.getByRole('button', { name: 'Compare forecasts', exact: true })
+      await compare.scrollIntoViewIfNeeded()
+      const before = (await compare.boundingBox())!
+      const x = before.x + before.width / 2,
+        y = before.y + before.height / 2
+      await page.mouse.move(x, y)
+      await page.mouse.down()
+      try {
+        releaseProjection()
+        await expect(card.locator('[data-forecast-end]')).toBeVisible()
+        // A pointer release must still land on the same control after the quote arrives.
+        const after = (await compare.boundingBox())!
+        expect(y, 'Compare forecasts moved below the held pointer').toBeGreaterThanOrEqual(after.y)
+        expect(y, 'Compare forecasts moved above the held pointer').toBeLessThanOrEqual(
+          after.y + after.height,
+        )
+        expect(x).toBeGreaterThanOrEqual(after.x)
+        expect(x).toBeLessThanOrEqual(after.x + after.width)
+      } finally {
+        await page.mouse.up()
+      }
+      await expect(compare).toHaveAttribute('aria-expanded', 'true')
+      await expect(card.getByRole('textbox', { name: 'Comparison ticker' })).toBeVisible()
+    },
+  )
+}
