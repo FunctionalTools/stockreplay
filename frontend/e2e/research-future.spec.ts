@@ -255,6 +255,17 @@ test('homepage forecast comparisons wait for explicit generation and stay in the
   await card.getByRole('button', { name: 'Add ticker' }).click()
   const extra = card.getByRole('list', { name: 'Comparison forecasts' })
   await expect(extra).toContainText('No saved forecast for this period')
+  const comparisonUrl = page.url()
+  await card.getByRole('button', { name: '5D', exact: true }).click()
+  await expect(page).toHaveURL(/range=5d&compare=TSLA$/)
+  await expect(card.locator('[data-forecast-model="statistical"]')).toHaveCount(2)
+  await page.goBack()
+  await expect(page).toHaveURL(comparisonUrl)
+  await expect(card.getByRole('button', { name: '1M', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  )
+  await expect(card.locator('[data-forecast-model="statistical"]')).toHaveCount(2)
   expect(generated).toHaveLength(0)
   await card.getByRole('button', { name: 'Generate AI forecast', exact: true }).click()
   await expect(card.getByRole('heading', { name: 'AMD forecast outlook' })).toBeVisible()

@@ -547,9 +547,7 @@ export function Research({
             </p>
           )}
           {connection?.provider === 'ollama_cloud' && connection.generation_detail && (
-            <p role="status">
-              {connection.generation_detail} <a href="#/settings">AI settings</a>
-            </p>
+            <p role="status">{connection.generation_detail} <a href="#/settings">AI settings</a></p>
           )}
           {busy && connection?.provider === 'ollama' && (
             <p role="status">
