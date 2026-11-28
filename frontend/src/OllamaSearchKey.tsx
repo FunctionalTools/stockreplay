@@ -51,11 +51,11 @@ export function OllamaSearchKey({
   }
 
   return (
-    <section className="hosted-setup" aria-label="Ollama web search">
-      <h3>Ollama web search</h3>
+    <section className="local-search-setup" aria-label="Ollama web search">
+      <h3>Add web search to your local model</h3>
       <p>
-        Use your Ollama website key to search the web from Research, chat and Future. Your Mac runs
-        the model for free. Web search uses your account’s search allowance.
+        This optional key adds Ollama web search to research, forecasts and chat. Your local model
+        generates the answers. Searches count toward your Ollama account’s allowance.
       </p>
       <p>
         <SourceLink url="https://ollama.com/settings/keys">Create an Ollama API key</SourceLink> ·{' '}

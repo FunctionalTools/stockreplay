@@ -16,38 +16,49 @@ cd stockreplay
 
 You can also double-click **StockReplay.command** in Finder. The first launch installs the dependencies, builds the website and opens your browser. To update an existing checkout, run `git pull --ff-only origin main` and open **StockReplay.command** again. The launcher checks for changed application files and rebuilds as needed. Run `./stop.sh` to stop the local service. [Installation details](docs/INSTALLATION.md)
 
-## Start with free local AI
+## Connect an AI provider
 
-On macOS Sonoma 14 or later, open **Settings → Free Mac setup guide** for instructions for your MacBook. Install the Ollama Mac app, move it to Applications and open it. In Terminal, download the recommended local model. [Ollama for Mac](https://ollama.com/download/mac)
+Open **Settings → AI connection** to choose the model for scores, forecasts and the assistant. Both hosted options accept a key directly in the website. **Remember key in macOS Keychain** keeps a key across restarts. Otherwise it lasts for the current service session.
+
+### Ollama website API
+
+1. Choose **Ollama website API** and use **Get an Ollama API key** to create a key in your Ollama account. [Ollama API keys](https://ollama.com/settings/keys)
+2. Paste the key, select a hosted model and click **Connect & test**. The model runs on Ollama’s servers. Settings reports **Model generation** and **Web search** independently. Scoring, forecasts and chat generation use the selected model.
+
+Ollama bills hosted generation per token, including the test request. Individual accounts include a free web search allowance. [Cloud pricing](https://ollama.com/pricing) · [Web search limits](https://ollama.com/blog/web-search)
+
+### OpenAI API
+
+Choose **OpenAI API**, paste a project API key, choose a model and click **Connect & test**. StockReplay verifies structured generation on the same endpoint that powers scores and chat. The test uses a small billable request. **Find models for this key** discovers the supported models available to your project. [OpenAI API keys](https://platform.openai.com/api-keys)
+
+If a request fails, the error identifies whether OpenAI rejected the key, restricted model access, exhausted API credits, rate-limited requests, or could not be reached. A project needs access to create Responses for its selected model. API billing is managed in the OpenAI Platform. [API billing](https://platform.openai.com/settings/organization/billing/overview)
+
+### On this Mac
+
+Choose **On this Mac → Free Mac setup guide** to generate locally. On macOS Sonoma 14 or later, install the Ollama Mac app, move it to Applications and open it. Download the recommended model in Terminal. [Ollama for Mac](https://ollama.com/download/mac)
 
 ```bash
 ollama pull qwen2.5:3b
 ```
 
-In Settings choose Ollama, click **Refresh models**, select `qwen2.5:3b` and click **Connect & test**. Verification generates a real response on your Mac. StockReplay uses that same local model for research, the assistant and workspace actions. Use the source search in Research, or ask the assistant to search for a ticker and a topic. Results show what StockReplay could read, the publisher, date and original URL. Public research sources and the forecast calendar require no account or API key. Fresh evidence requires an internet connection. [Mac setup and troubleshooting](docs/INSTALLATION.md)
+In Settings, click **Refresh models**, select `qwen2.5:3b` and click **Connect & test**. Your local model can generate using public research sources without a paid key. To add Ollama's website search while keeping generation local, paste a website key under **Add web search to your local model** and choose **Test web search**. Fresh public evidence requires an internet connection. [Mac setup and troubleshooting](docs/INSTALLATION.md)
 
-### Use an Ollama website key
-
-In **Settings**, select **Free on this Mac**, paste the key in **Ollama web search API key**, and select **Test web search**. The app sends a real search request and keeps generation on your Mac. Web search has an individual free allowance. To generate on Ollama’s servers instead, explicitly select **Ollama Cloud API + web search (metered)**. Its connection test reports generation and search separately. Ollama lists hosted generation prices per token. [Create a key](https://ollama.com/settings/keys) · [Web search](https://docs.ollama.com/capabilities/web-search) · [Cloud pricing](https://ollama.com/pricing)
-
-### Optional OpenAI connection
-
-Choose OpenAI in **Settings**, paste a project API key, choose a model and click **Connect & test**. StockReplay verifies that the selected model can generate a structured response using the same OpenAI endpoint as the assessment and assistant. Verification uses a small billable API request. Keys stay in memory for the running session unless you select **Remember key in macOS Keychain**. The model menu can discover supported models available to your project. [OpenAI API keys](https://platform.openai.com/api-keys)
+## Generate scores
 
 In **Research**, click **Generate scores**. The model determines an independent buy score and risk score on a 0–100 scale over a six-to-twelve-month horizon. Higher buy means a stronger investment case. Higher risk means more downside or uncertainty. Each reason links to the source it uses. The assessment includes its generation date, model and confidence. Open the factor breakdown to see how each available input affected both scores, the dated sources, and which inputs were missing. Earlier assessments remain available for comparison.
-
-If a request fails, the error identifies whether OpenAI rejected the key, restricted model access, exhausted API credits, rate-limited requests, or could not be reached. A project needs access to create Responses for its selected model. API billing is managed in the OpenAI Platform. [API billing](https://platform.openai.com/settings/organization/billing/overview)
 
 ## Your workspace
 
 - **Research** opens on a holding when a portfolio is available and uses SPY as the broad-market starting point for an empty account. Choose a ticker directly on the page or set a fixed starting stock in Settings. Select 1D, 5D, longer periods or an exact pair of dates to see the return and its price basis. Research includes analyst vote distributions, published targets, searchable individual firm ratings, and company, sector and market news. The advanced chart adds candlesticks, indicators, replay, comparisons, drawings and chart export.
-- **Past / Future** sits on the main price chart in Research. Pick a preset or custom dates under Past for actual prices. Under Future, choose a horizon and generate a forecast with the active AI provider. Expand **Compare forecasts** to add tickers and generate or reopen each comparison. Reopen saved forecasts to review the same curve and citations. Select an event marker for its source, date status and available expectations.
+- **Past / Future** sits on the main price chart in Research. Pick a preset or custom dates under Past for actual prices. Under Future, every horizon immediately displays its projected median, uncertainty range and end date. Choose **Generate AI forecast** to add your selected AI model’s outlook. Expand **Compare forecasts** to add tickers and generate or reopen each comparison. Reopen saved forecasts to review the same curve and citations. Select an event marker for its source, date status and available expectations.
 - **Calendar** charts a stock or compares up to eight. Choose a day, week, month, six months, year or five years, then move through the projected sessions. The median and shaded interval come from simulated paths based on observed trading history. Select a dated marker for its status, relevance and source.
 - **Watchlists** lets you create named lists, add tickers from Research, import a Symbol/Ticker CSV and set local price alerts.
 - **Portfolio** imports current Fidelity and other brokerage or bank statements from CSV, OFX or QFX. Preview mapped positions before applying a statement, or enter accounts, holdings and balances manually. Import a separate daily price CSV to chart your own history.
 - **Settings** controls the starting stock, display mode, theme, advanced trader tools, AI provider, model and optional key storage.
 
-![The homepage Future chart with its price band and a sourced fiscal quarter marker](docs/screenshots/home-future.png)
+![Switching among one day, five days, one month and two years on the Sandisk Future chart](docs/screenshots/future-periods.gif)
+
+[View a generated AI forecast with a sourced fiscal-quarter marker](docs/screenshots/home-future.png)
 
 [Multi-stock calendar preview](docs/screenshots/calendar.png)
 

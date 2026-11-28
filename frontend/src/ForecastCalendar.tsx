@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { ArrowLeft, Plus, RefreshCw, X } from 'lucide-react'
 import { SourceLink, useResource } from './deskCommon'
 import { ErrorBox } from './ui'
@@ -6,8 +6,10 @@ import { shortDay, tickerPattern } from './workspace'
 import {
   dayTime,
   eventPeriod,
+  eventPaths,
+  calendarHref,
+  forecastInspectionDate,
   horizons,
-  latestSharedClose,
   type CalendarSelection,
   type Events,
   type Forecast,
@@ -15,18 +17,22 @@ import {
   type MarketEvent,
   type Projections,
 } from './forecastData'
+import { validDay } from './priceRanges'
+import { futureHref } from './forecastSnapshot'
 import { ForecastChart, lineColors } from './ForecastChart'
 import { ForecastEvents } from './ForecastEvents'
 import './forecastCalendar.css'
 
 const emptyEvents: MarketEvent[] = []
-function civilPeriod(horizon: Horizon) {
+function civilPeriod({ horizon, start: from, end: to }: CalendarSelection) {
+  if (horizon === 'custom' && from && to) return { start: from, end: to }
   const start = new Date().toISOString().slice(0, 10),
     end = new Date(dayTime(start))
-  if (horizon === '1d' || horizon === '1w')
+  if (horizon === '1d' || horizon === '1w' || horizon === '5d')
     end.setUTCDate(end.getUTCDate() + (horizon === '1d' ? 1 : 7))
+  else if (horizon === 'ytd') end.setUTCMonth(11, 31)
   else {
-    const months = { '1mo': 1, '6mo': 6, '1y': 12, '5y': 60 }[horizon],
+    const months = horizon === 'max' ? 120 : parseInt(horizon) * (horizon.endsWith('y') ? 12 : 1),
       day = end.getUTCDate()
     end.setUTCDate(1)
     end.setUTCMonth(end.getUTCMonth() + months)
@@ -48,7 +54,7 @@ function ForecastSources({ series, seed }: { series: Forecast[]; seed: number })
           <section key={s.symbol}>
             <h3>{s.symbol}</h3>
             <small>
-              Observed closes through {shortDay(s.as_of)} · {s.calendar}
+              Confirmed daily closes through {shortDay(s.coverage.end)} · {s.calendar}
             </small>
             <p>
               {s.method}
@@ -92,28 +98,45 @@ function ForecastSources({ series, seed }: { series: Forecast[]; seed: number })
             )}
             {s.url ? <SourceLink url={s.url}>{s.source}</SourceLink> : <small>{s.source}</small>}
             {s.fetched && <small> · Retrieved {shortDay(s.fetched)}</small>}
-            {s.stale && <p className="data-warning">Using cached prices.</p>}
           </section>
         ))}
       </div>
     </details>
   )
 }
-function CalendarResults({ symbols, horizon }: { symbols: string[]; horizon: Horizon }) {
-  const projection = useResource<Projections>(
-    '/desk/projections?' + new URLSearchParams({ symbols: symbols.join(','), horizon, seed: '42' }),
-  )
+function CalendarResults(selection: CalendarSelection) {
+  const { symbols, horizon, start, end } = selection
+  const custom = horizon === 'custom' && start && end ? { start, end } : null
+  const query = new URLSearchParams({ symbols: symbols.join(','), horizon, seed: '42', ...custom })
+  const projection = useResource<Projections>('/desk/projections?' + query)
   const series = projection.data?.series
-  const period = (series && eventPeriod(series)) || civilPeriod(horizon)
-  const calendar = useResource<Events>(
-    projection.loading && !projection.data
-      ? null
-      : '/desk/events?' + new URLSearchParams({ symbols: symbols.join(','), ...period }),
-  )
+  const period = custom || (series && eventPeriod(series)) || civilPeriod(selection)
+  const [firstEvents, laterEvents] = eventPaths(symbols, period.start, period.end)
+  const ready = !projection.loading || !!projection.data
+  const calendar = useResource<Events>(ready ? firstEvents : null)
+  const later = useResource<Events>(ready ? laterEvents : null)
   const [selectedDate, setDate] = useState<string | null>(null),
     [eventId, selectEvent] = useState<string | null>(null)
-  const events = calendar.data?.events || emptyEvents
-  const date = selectedDate || (series && latestSharedClose(series)) || period.start
+  const events = useMemo(
+    () => [
+      ...new Map(
+        [...(calendar.data?.events || emptyEvents), ...(later.data?.events || emptyEvents)].map(
+          (e) => [e.id, e],
+        ),
+      ).values(),
+    ],
+    [calendar.data, later.data],
+  )
+  const gaps = [
+    ...new Map(
+      [...(calendar.data?.gaps || []), ...(later.data?.gaps || [])].map((g) => [
+        JSON.stringify(g),
+        g,
+      ]),
+    ).values(),
+  ]
+  const endSession = useMemo(() => series && forecastInspectionDate(series), [series])
+  const date = selectedDate || endSession || period.start
   const highlight = events.find((e) => e.id === eventId) || null
   const inspect = (e: MarketEvent) => selectEvent(e.id)
   return (
@@ -133,6 +156,7 @@ function CalendarResults({ symbols, horizon }: { symbols: string[]; horizon: Hor
           onClick={() => {
             projection.reload(true)
             calendar.reload(true)
+            later.reload(true)
           }}
         >
           <RefreshCw size={13} /> Refresh sources
@@ -140,6 +164,13 @@ function CalendarResults({ symbols, horizon }: { symbols: string[]; horizon: Hor
       )}
       {!!series?.length && (
         <section className="panel fc-plot-panel">
+          {series
+            .filter((s) => s.data_note || s.stale)
+            .map((s) => (
+              <p className="data-warning" key={s.symbol}>
+                <strong>{s.symbol}</strong> · {s.data_note || 'Using cached prices.'}
+              </p>
+            ))}
           <ForecastChart
             series={series}
             symbols={symbols}
@@ -147,16 +178,22 @@ function CalendarResults({ symbols, horizon }: { symbols: string[]; horizon: Hor
             date={date}
             choose={setDate}
             preview={inspect}
+            civilEnd={period.end}
+            forwardStart={custom?.start}
           />
           <p className="fc-model-caption">
             Simulated from historical prices. Events are shown for context.
-            {series
-              .filter((s) => s.url)
-              .map((s) => (
-                <SourceLink key={s.symbol} url={s.url!}>
-                  {s.symbol} price history
-                </SourceLink>
-              ))}
+            {series.flatMap((s) =>
+              (s.price_sources || [{ source: s.source, url: s.url }]).flatMap((source) =>
+                source.url ? (
+                  <SourceLink key={s.symbol + source.url} url={source.url}>
+                    {s.symbol} · {source.source}
+                  </SourceLink>
+                ) : (
+                  []
+                ),
+              ),
+            )}
           </p>
         </section>
       )}
@@ -177,15 +214,15 @@ function CalendarResults({ symbols, horizon }: { symbols: string[]; horizon: Hor
             setDate(d)
             selectEvent(null)
           }}
-          loading={calendar.loading}
+          loading={calendar.loading || later.loading}
         />
       )}
-      <ErrorBox text={calendar.error} />
-      {!!calendar.data?.gaps.length && (
+      <ErrorBox text={calendar.error || later.error} />
+      {!!gaps.length && (
         <details className="panel fc-sources">
           <summary>Event source coverage</summary>
           <ul>
-            {calendar.data.gaps.map((g, i) => (
+            {gaps.map((g, i) => (
               <li key={i}>
                 <strong>{g.source}</strong>
                 {g.symbols.length ? ' · ' + g.symbols.join(', ') : ''} · {g.reason}
@@ -206,21 +243,25 @@ export function ForecastCalendar({
   change: (s: CalendarSelection) => void
 }) {
   const [input, type] = useState(''),
-    [error, fail] = useState('')
+    [error, fail] = useState(''),
+    [editing, editDates] = useState(false)
   const { symbols, horizon } = selection
   function add() {
     const s = input.trim().toUpperCase()
     if (!tickerPattern.test(s)) return fail('Enter an exchange ticker, such as AAPL.')
     if (symbols.includes(s)) return fail(s + ' is already on the calendar.')
     if (symbols.length >= 8) return fail('Choose up to eight tickers.')
-    change({ symbols: [...symbols, s], horizon })
+    change({ ...selection, symbols: [...symbols, s] })
     type('')
     fail('')
   }
   return (
     <div className="forecast-calendar">
-      <a className="fc-back" href={'#/research/' + encodeURIComponent(symbols[0])}>
-        <ArrowLeft size={14} /> Research {symbols[0]}
+      <a
+        className="fc-back"
+        href={futureHref(symbols[0], horizon, selection.start, selection.end, symbols.slice(1))}
+      >
+        <ArrowLeft size={14} /> {symbols[0]} Future chart
       </a>
       <div className="page-head">
         <div>
@@ -242,7 +283,7 @@ export function ForecastCalendar({
                       aria-label={'Remove ' + s + ' from forecast'}
                       onClick={() => {
                         fail('')
-                        change({ horizon, symbols: symbols.filter((t) => t !== s) })
+                        change({ ...selection, symbols: symbols.filter((t) => t !== s) })
                       }}
                     >
                       <X size={12} />
@@ -284,19 +325,46 @@ export function ForecastCalendar({
                 className={horizon === key ? 'selected' : ''}
                 aria-pressed={horizon === key}
                 key={key}
-                onClick={() => change({ symbols, horizon: key as Horizon })}
+                onClick={() => {
+                  editDates(key === 'custom')
+                  fail('')
+                  if (key !== 'custom') change({ symbols, horizon: key as Horizon })
+                }}
               >
                 {label}
               </button>
             ))}
           </div>
         </div>
+        {(editing || horizon === 'custom') && (
+          <form
+            className="range-dates"
+            key={selection.start + '/' + selection.end}
+            onSubmit={(e) => {
+              e.preventDefault()
+              const data = new FormData(e.currentTarget)
+              const start = String(data.get('start')),
+                end = String(data.get('end'))
+              if (!validDay(start) || !validDay(end) || start > end)
+                return fail('Choose future dates in chronological order.')
+              fail('')
+              editDates(false)
+              change({ symbols, horizon: 'custom', start, end })
+            }}
+          >
+            <label>
+              Forecast start date
+              <input required type="date" name="start" defaultValue={selection.start} />
+            </label>
+            <label>
+              Forecast end date
+              <input required type="date" name="end" defaultValue={selection.end} />
+            </label>
+            <button className="btn small">Apply dates</button>
+          </form>
+        )}
       </section>
-      <CalendarResults
-        key={symbols.join(',') + '|' + horizon}
-        symbols={symbols}
-        horizon={horizon}
-      />
+      <CalendarResults key={calendarHref(selection)} {...selection} />
     </div>
   )
 }

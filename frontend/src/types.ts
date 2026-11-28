@@ -1,8 +1,14 @@
 export const pct = (n: number | null | undefined, sign = true, digits = 2) =>
   n == null ? '—' : (sign && n > 0 ? '+' : '') + n.toFixed(digits) + '%'
-export async function api<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
+export async function api<T>(
+  path: string,
+  method = 'GET',
+  body?: unknown,
+  signal?: AbortSignal,
+): Promise<T> {
   const response = await fetch('/api' + path, {
     method,
+    signal,
     headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
   })

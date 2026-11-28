@@ -34,6 +34,7 @@ export function useResource<T>(path: string | null) {
   useEffect(() => {
     let active = true
     if (!path) return
+    const request = new AbortController()
     setState((s) => ({
       key: path,
       value: s.key === path ? s.value : null,
@@ -41,7 +42,7 @@ export function useResource<T>(path: string | null) {
       loading: true,
     }))
     const url = forcePath === path ? path + (path.includes('?') ? '&' : '?') + 'refresh=true' : path
-    void api<T>(url)
+    void api<T>(url, 'GET', undefined, request.signal)
       .then((value) => {
         if (active) setState({ key: path, value, error: '', loading: false })
       })
@@ -56,6 +57,7 @@ export function useResource<T>(path: string | null) {
       })
     return () => {
       active = false
+      request.abort()
     }
   }, [path, version, forcePath])
   return {

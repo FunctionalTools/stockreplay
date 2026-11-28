@@ -33,12 +33,13 @@ class PublicCache:
             else None
         )
 
-    def get(self, key, ttl, loader, refresh=False):
+    def get(self, key, ttl, loader, refresh=False, *, required_field=None):
         with self.locks[hash(key) % len(self.locks)]:
             old = self.read(key)
             if (
                 old
                 and not refresh
+                and (required_field is None or required_field in old["data"])
                 and (
                     datetime.now(timezone.utc) - datetime.fromisoformat(old["fetched"])
                 ).total_seconds()

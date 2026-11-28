@@ -12,6 +12,7 @@ export type Prices = {
   price_basis?: string
   as_of: string
   source: string
+  price_sources?: { source: string; url: string }[]
   url: string | null
   bars: { time: number; date: string; raw_close: number; close: number }[]
 }
@@ -315,6 +316,9 @@ export function PricePlot({ series, compact = false }: { series: Prices[]; compa
         {series.map((s, i) => (
           <span key={s.symbol} style={{ color: colors[i % 4] }}>
             {s.url ? <SourceLink url={s.url}>{multi ? s.symbol : s.source}</SourceLink> : s.source}
+            {s.price_sources?.filter((item) => item.url !== s.url).map((item) => (
+              <span key={item.url}> · <SourceLink url={item.url}>{item.source}</SourceLink></span>
+            ))}
           </span>
         ))}
       </figcaption>

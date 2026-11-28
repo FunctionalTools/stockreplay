@@ -27,6 +27,7 @@ class Hosted:
         self.calls = []
         self.fail = {}
         self.mode = "tool"
+        self.hits = [HIT]
 
     def __call__(self, req):
         assert req.url.scheme == "https" and req.url.host == "ollama.com"
@@ -49,7 +50,7 @@ class Hosted:
             )
         assert req.headers["authorization"].startswith("Bearer ")
         if path == "web_search":
-            return httpx.Response(200, json={"results": [HIT]})
+            return httpx.Response(200, json={"results": self.hits})
         assert path == "chat" and "format" not in body and body["stream"] is False
         inputs = json.loads(body["messages"][1]["content"])
         tools = body.get("tools", [])
@@ -60,6 +61,8 @@ class Hosted:
         else:
             function = "submit_connection_check"
         if function == "submit_connection_check":
+            if body["model"] == CLOUD_MODEL:
+                assert body["think"] == "low"
             result = {"result": "ready"}
         elif function == "submit_app_assistant":
             result = {
@@ -207,6 +210,8 @@ def test_hosted_model_search_and_real_workflow_contracts(tmp_path, monkeypatch):
         ("chat", 429, "usage limit reached", "limit"),
         ("chat", 503, "model at capacity", "capacity"),
         ("chat", 403, "access denied", "access"),
+        ("chat", 402, "payment required", "credits"),
+        ("chat", 403, "account has insufficient credits", "credits"),
         ("web_search", 429, "daily search limit", "limit"),
     ],
 )
@@ -295,12 +300,95 @@ def test_keychain_slots_are_independent_and_migrate_without_changing_model(tmp_p
         assert not c.get("/api/openai").json()["configured"]
 
 
+def test_hosted_key_runs_search_and_answer_even_when_the_mac_has_no_local_model(
+    tmp_path, monkeypatch
+):
+    from tests.test_ollama_web import UNKNOWN, disable_market
+
+    disable_market(monkeypatch)
+    app, server = app_and_server(tmp_path)
+    t = app.state.terminal
+    t.ai.ollama.transport = httpx.MockTransport(
+        lambda _: pytest.fail("Unexpected local Ollama dependency")
+    )
+    server.hits = []
+    with TestClient(app) as c:
+        # A successful authenticated response can legitimately have zero hits.
+        connection = c.put(CLOUD, json={"key": TEST_KEY}).raise_for_status().json()
+        assert connection["verified"] and connection["web_search"]["verified"]
+        server.hits = [
+            {
+                "title": "Microsoft reports cloud demand",
+                "url": UNKNOWN,
+                "content": "Microsoft discussed cloud demand in its latest earnings report.",
+            }
+        ]
+        q = {"question": "Search the web for Microsoft cloud demand"}
+        result = c.post("/api/assistant/research/MSFT", json=q).raise_for_status().json()
+        assert (
+            result["sources"][0]["url"] == UNKNOWN
+            and result["sources"][0]["discovered_via"] == "Ollama Web Search"
+        )
+        assert result["text"] == "Demand is a cited concern."
+        lookups = [b["query"] for path, b, _ in server.calls if path == "web_search"]
+        prompts = [b for path, b, _ in server.calls if path == "chat"]
+        assert any("Microsoft" in q for q in lookups)
+        assert any(
+            "Microsoft discussed cloud demand" in b["messages"][1]["content"] for b in prompts
+        )
+
+        # Credit exhaustion after a successful check keeps the actual source results accessible.
+        server.fail["chat"] = (402, "payment required")
+        unavailable = c.post("/api/assistant/research/MSFT", json=q).raise_for_status().json()
+        assert "credits" in unavailable["text"] and unavailable["sources"][0]["url"] == UNKNOWN
+        health = c.get("/api/ai").json()
+        assert health["provider"] == "ollama_cloud" and not health["verified"]
+        assert "billing" in health["generation_detail"] and health["web_search"]["verified"]
+        del server.fail["chat"]
+        # Successful research also restores the status without a paid extra Settings test.
+        assert (
+            c.post("/api/assistant/research/MSFT", json=q).raise_for_status().json()["text"]
+            == result["text"]
+        )
+        assert c.get("/api/ai").json()["verified"]
+        server.fail["web_search"] = (429, "daily search limit")
+        t.desk.web_research("MSFT", "Microsoft earnings", refresh=True)
+        health = c.get("/api/ai").json()
+        assert (
+            health["verified"]
+            and not health["web_search"]["verified"]
+            and "limit" in health["web_search"]["detail"]
+        )
+        del server.fail["web_search"]
+        t.desk.web_research("MSFT", "Microsoft earnings", refresh=True)
+        assert c.get("/api/ai").json()["web_search"]["verified"]
+
+
 @pytest.mark.skipif(
     not os.getenv("STOCKREPLAY_TEST_OLLAMA_CLOUD_KEY"),
     reason="Requires an authorized Ollama Cloud API key",
 )
-def test_live_ollama_cloud_generation_and_web_search(tmp_path):
-    with TestClient(create_app(tmp_path)) as c:
+def test_live_ollama_cloud_generation_and_web_search(tmp_path, monkeypatch):
+    from tests.test_ollama_web import disable_market
+
+    # Isolate evidence to actual hosted search; the resulting answer must cite its original URL.
+    disable_market(monkeypatch)
+    app = create_app(tmp_path)
+    terminal = app.state.terminal
+    terminal.ai.ollama.transport = httpx.MockTransport(
+        lambda _: pytest.fail("Unexpected local Ollama dependency")
+    )
+    cloud = terminal.ai.ollama_cloud
+    actual = cloud.structured
+    outputs = []
+
+    def generated(key, model, name, *args):
+        response = actual(key, model, name, *args)
+        outputs.append(name)
+        return response
+
+    monkeypatch.setattr(cloud, "structured", generated)
+    with TestClient(app) as c:
         result = c.put(
             CLOUD,
             json={
@@ -312,6 +400,22 @@ def test_live_ollama_cloud_generation_and_web_search(tmp_path):
         status = result.json()
         assert status["verified"] and status["web_search"]["verified"], status
         assert c.get("/api/ai").json()["provider"] == "ollama_cloud"
+        answer = (
+            c.post(
+                "/api/assistant/research/MSFT",
+                json={
+                    "question": "Search the web for Microsoft's latest quarterly cloud earnings and summarize its sales outlook."
+                },
+            )
+            .raise_for_status()
+            .json()
+        )
+        assert "stock_question" in outputs and answer["text"].strip()
+        assert any(
+            source.get("discovered_via") == "Ollama Web Search"
+            and source["url"].startswith("https://")
+            for source in answer["sources"]
+        )
 
 
 @pytest.mark.skipif(

@@ -215,13 +215,21 @@ def test_range_calendar_and_same_period_consensus():
 )
 def test_live_local_provider_forecast(tmp_path):
     with TestClient(create_app(tmp_path)) as c:
-        addr = "/api/desk/forecast/AAPL?range=1mo"
+        addr = "/api/desk/forecast/SNDK?range=2y"
+        live = c.get("/api/desk/projections?symbols=SNDK&horizon=2y").raise_for_status().json()
+        assert not live["errors"], live["errors"]
+        baseline = live["series"][0]
         row = c.post(addr).raise_for_status().json()["forecast"]
         assert row["provider"] == "ollama" and row["model"]
-        assert row["summary_source_ids"] and row["drivers"] and len(row["points"]) > 1
+        assert row["symbol"] == "SNDK" and row["range"] == "2y" and len(row["points"]) > 450
+        assert row["as_of"] >= baseline["as_of"] and row["points"][0]["median"] > 0
+        assert row["points"][1]["date"] > row["expected_session"]
+        assert row["points"][-1]["date"] <= row["requested_end"]
+        assert row["price_sources"] and row["summary_source_ids"] and row["drivers"]
         refs = {s["id"] for s in row["sources"]}
         assert all(set(d["source_ids"]) <= refs for d in row["drivers"])
-        assert c.get(addr).json()["forecast"]["id"] == row["id"]
+    with TestClient(create_app(tmp_path)) as reopened:
+        assert reopened.get(addr).json()["forecast"] == row
 
 
 def test_calendar_and_uncompared_estimates_cannot_generate_directional_claims():
@@ -267,3 +275,26 @@ def test_calendar_and_uncompared_estimates_cannot_generate_directional_claims():
     ):
         with pytest.raises(ValueError):
             forecasts.validated(bad, rows, quarters, schema)
+
+
+def test_ai_generation_uses_a_real_earlier_close_when_a_session_is_missing(wired, monkeypatch):
+    app, _, _ = wired
+    daily = history()
+    daily["bars"] = [b for b in daily["bars"] if b["date"] < "2026-11-27"]
+    monkeypatch.setattr(
+        app.state.terminal.desk,
+        "chart",
+        lambda symbol, interval, *args: {
+            "data": daily if interval == "1d" else None,
+            "fetched": "2026-11-27T19:00:00Z",
+            "stale": False,
+        },
+    )
+    with TestClient(app) as c:
+        result = c.post("/api/desk/forecast/AAPL?range=1d").raise_for_status().json()["forecast"]
+        assert result["stale"] and result["as_of"] == "2026-11-25"
+        assert (
+            result["expected_session"] == "2026-11-27"
+            and "daily history ends" in result["data_note"]
+        )
+        assert [p["date"] for p in result["points"]] == ["2026-11-25", "2026-11-30"]

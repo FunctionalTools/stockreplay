@@ -127,10 +127,12 @@ export function MacSetupGuide({ close }: { close: () => void }) {
               dependencies and opens the local website.
             </p>
             <p>
-              In <strong>Settings → AI provider</strong>, choose{' '}
-              <strong>Free on this Mac</strong>. For website search, sign in to Ollama, create an API key, paste it under <strong>Ollama web search</strong> and choose <strong>Test web search</strong>. Use <strong>Refresh models</strong>,
-              select the downloaded model and click <strong>Connect &amp; test</strong>. Wait for{' '}
-              <strong>Verified for generation</strong>.
+              In <strong>Settings → AI provider</strong>, choose <strong>On this Mac</strong>. Use{' '}
+              <strong>Refresh models</strong>, select the downloaded model and click{' '}
+              <strong>Connect &amp; test</strong>. Wait for <strong>Verified for generation</strong>
+              . To add Ollama’s web search, paste a website key under{' '}
+              <strong>Add web search to your local model</strong> and choose{' '}
+              <strong>Test web search</strong>.
             </p>
             <SourceLink url="https://github.com/FunctionalTools/stockreplay">
               StockReplay repository

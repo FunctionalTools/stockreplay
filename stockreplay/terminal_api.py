@@ -380,14 +380,20 @@ def register(app, db):
         try:
             return assistant.research_question(gateway, brief, item.question)
         except HTTPException as exc:
-            if getattr(gateway, "provider", "") != "ollama_cloud" or exc.status_code not in (403, 429, 503):
+            reasons = {
+                401: "Ollama rejected the model request.",
+                402: "Ollama generation needs available credits.",
+                403: "Ollama denied access to generation.",
+                404: "The selected Ollama model is unavailable.",
+                429: "Ollama generation limit reached.",
+                502: "Ollama could not complete the answer.",
+                503: "Ollama generation is busy.",
+                504: "Ollama generation timed out.",
+            }
+            if getattr(gateway, "provider", "") != "ollama_cloud" or exc.status_code not in reasons:
                 raise
             reply = assistant.source_reply(brief, item.question)
-            reason = {
-                403: "Ollama denied access to generation.",
-                429: "Ollama generation limit reached.",
-                503: "Ollama generation is busy.",
-            }[exc.status_code]
+            reason = reasons[exc.status_code]
             return {**reply, "text": reason + " " + reply["text"]}
 
     @r.get("/prices/imports")
@@ -480,8 +486,12 @@ def register(app, db):
         seed: int = 42,
         refresh: bool = False,
         as_of: Date | None = None,
+        start: Date | None = None,
+        end: Date | None = None,
     ):
-        return project_symbols(t.desk, symbols.split(","), horizon, seed, refresh, as_of)
+        return project_symbols(
+            t.desk, symbols.split(","), horizon, seed, refresh, as_of, start, end
+        )
 
     @r.get("/desk/range/{symbol}")
     def selected_range(

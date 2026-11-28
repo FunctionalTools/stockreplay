@@ -6,6 +6,13 @@ import { LocalModelConnection } from './LocalModelConnection'
 import { useResource, SourceLink } from './deskCommon'
 import { Busy, ErrorBox, Field } from './ui'
 import { type Preferences, type Connection, type AIProvider, tickerPattern } from './workspace'
+
+const providers: { id: AIProvider; title: string; detail: string }[] = [
+  { id: 'ollama_cloud', title: 'Ollama website API', detail: 'Key from ollama.com' },
+  { id: 'openai', title: 'OpenAI API', detail: 'OpenAI project key' },
+  { id: 'ollama', title: 'On this Mac', detail: 'Local Ollama model' },
+]
+
 function HostedAISettings({
   provider,
   connection,
@@ -67,45 +74,25 @@ function HostedAISettings({
   const options = available.some((item) => item.id === model)
     ? available
     : [{ id: model, label: model }, ...available]
-  const dirty =
-    key.trim() ||
-    model !== connection?.model ||
-    remember !== (connection?.storage === 'macOS Keychain')
+  const changedCredentials = !!key.trim() || model !== connection?.model
+  const dirty = changedCredentials || remember !== (connection?.storage === 'macOS Keychain')
   return (
     <>
-      {ollama ? (
-        <div className="hosted-setup">
-          <h3>Connect Ollama Cloud</h3>
-          <ol>
-            <li>
-              Sign in to your Ollama account and create an API key.{' '}
-              <SourceLink url="https://ollama.com/settings/keys">Create a key</SourceLink>
-            </li>
-            <li>
-              Paste the key below, choose a cloud model and select{' '}
-              <strong>Connect &amp; test</strong>. StockReplay checks web search and model
-              generation separately.
-            </li>
-            <li>
-              Search a ticker in Research, generate Buy and Risk scores, or open{' '}
-              <strong>Future</strong> on its price chart and generate a forecast.
-            </li>
-          </ol>
+      <div className="hosted-setup">
+        {ollama ? (
           <p>
-            Ollama charges per token for hosted generation, including the connection test. Select
-            Free on this Mac to generate locally with this website’s web search.{' '}
-            <SourceLink url="https://ollama.com/settings">Check usage</SourceLink> ·{' '}
-            <SourceLink url="https://ollama.com/pricing">Cloud pricing</SourceLink> ·{' '}
-            <SourceLink url="https://docs.ollama.com/capabilities/web-search">
-              Web search guide
+            Paste your ollama.com key to run the model and search the web through Ollama Cloud.{' '}
+            <SourceLink url="https://ollama.com/settings/keys">Get an Ollama API key</SourceLink>
+          </p>
+        ) : (
+          <p>
+            Your API project pays for the connection test, scores, forecasts and chat.{' '}
+            <SourceLink url="https://platform.openai.com/api-keys">
+              Get an OpenAI API key
             </SourceLink>
           </p>
-        </div>
-      ) : (
-        <p>
-          OpenAI runs in the cloud. Your API project pays for the connection test, scores and chat.
-        </p>
-      )}
+        )}
+      </div>
       <form
         className="stack"
         onSubmit={(e) => {
@@ -118,11 +105,13 @@ function HostedAISettings({
             type="password"
             autoComplete="off"
             spellCheck={false}
+            disabled={busy || discovering}
             value={key}
             onChange={(e) => {
               setKey(e.target.value)
               setCandidateModels(null)
               setNote('')
+              fail('')
             }}
             placeholder={
               connection?.configured ? 'Saved key · paste to replace' : 'Paste your API key'
@@ -130,8 +119,24 @@ function HostedAISettings({
             required={!connection?.configured}
           />
         </Field>
+        {ollama && (
+          <small>
+            Ollama bills hosted generation per token, including the test. Individual accounts
+            include a free web search allowance.{' '}
+            <SourceLink url="https://ollama.com/pricing">Cloud pricing</SourceLink> ·{' '}
+            <SourceLink url="https://ollama.com/blog/web-search">Search limits</SourceLink>
+          </small>
+        )}
         <Field name="API model">
-          <select value={model} onChange={(e) => setModel(e.target.value)}>
+          <select
+            value={model}
+            disabled={busy || discovering}
+            onChange={(e) => {
+              setModel(e.target.value)
+              setNote('')
+              fail('')
+            }}
+          >
             {options.map((m) => (
               <option value={m.id} key={m.id}>
                 {m.label}
@@ -172,6 +177,7 @@ function HostedAISettings({
         <label className="check">
           <input
             type="checkbox"
+            disabled={busy || discovering}
             checked={remember}
             onChange={(e) => setRemember(e.target.checked)}
           />{' '}
@@ -221,7 +227,9 @@ function HostedAISettings({
           )}
         </div>
       </form>
-      {ollama && connection?.configured ? (
+      {connection?.configured && changedCredentials ? (
+        <small role="status">Connect &amp; test to verify this key and model.</small>
+      ) : ollama && connection?.configured ? (
         <div className="hosted-checks" role="status">
           <p>
             <strong>Model generation</strong> · {connection.verified ? 'Verified' : 'Unverified'} ·{' '}
@@ -244,7 +252,14 @@ function HostedAISettings({
         )
       )}
       {note && <p role="status">{note}</p>}
-      <ErrorBox text={error || models.error} />
+      <ErrorBox
+        text={
+          error ||
+          (models.error
+            ? 'Model list unavailable. You can still test the selected model. ' + models.error
+            : '')
+        }
+      />
       <small>
         {ollama
           ? 'The test sends one public search and a small generation request to Ollama.'
@@ -269,20 +284,21 @@ export function Settings({
 }) {
   const [home, setHome] = useState(prefs.home_symbol)
   const [busy, wait] = useState(false)
-  const [switching, setSwitching] = useState(false)
+  const [switching, setSwitching] = useState<AIProvider | null>(null)
   const [error, fail] = useState('')
   const [switchError, setSwitchError] = useState('')
   const provider = connection?.provider ?? 'ollama'
+  const selected = switching ?? provider
   useEffect(() => setHome(prefs.home_symbol), [prefs.home_symbol])
   async function switchProvider(next: AIProvider) {
-    setSwitching(true)
+    setSwitching(next)
     setSwitchError('')
     try {
       changed(await api<Connection>('/ai', 'PATCH', { provider: next }))
     } catch (e) {
       setSwitchError(errorText(e))
     } finally {
-      setSwitching(false)
+      setSwitching(null)
     }
   }
   async function update(p: Partial<Preferences>) {
@@ -305,29 +321,38 @@ export function Settings({
           <h2>
             <KeyRound size={18} /> AI connection
           </h2>
-          <Field name="AI provider">
-            <select
-              value={provider}
-              disabled={busy || switching}
-              onChange={(event) => void switchProvider(event.target.value as AIProvider)}
-            >
-              <option value="ollama_cloud">Ollama Cloud API + web search (metered)</option>
-              <option value="ollama">Free on this Mac (Ollama + website web search)</option>
-              <option value="openai">OpenAI API (paid)</option>
-            </select>
-          </Field>
+          <fieldset className="ai-provider-picker" disabled={busy || !!switching}>
+            <legend>AI provider</legend>
+            <div className="ai-provider-options">
+              {providers.map(({ id, title, detail }) => (
+                <label key={id} className={selected === id ? 'selected' : ''}>
+                  <input
+                    type="radio"
+                    name="ai-provider"
+                    value={id}
+                    checked={selected === id}
+                    onChange={() => void switchProvider(id)}
+                  />
+                  <span>
+                    <strong>{title}</strong>
+                    <small>{detail}</small>
+                  </span>
+                </label>
+              ))}
+            </div>
+          </fieldset>
           <ErrorBox text={switchError} />
           {switching ? (
             <Busy text="Switching provider" />
           ) : provider === 'ollama' ? (
             <>
-              <OllamaSearchKey busy={busy} wait={wait} />
               <LocalModelConnection
                 connection={connection}
                 changed={changed}
                 busy={busy}
                 wait={wait}
               />
+              <OllamaSearchKey busy={busy} wait={wait} />
             </>
           ) : (
             <HostedAISettings

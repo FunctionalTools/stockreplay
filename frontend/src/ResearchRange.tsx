@@ -54,9 +54,7 @@ export function ResearchRange({
   const card = useRef<HTMLElement>(null)
   const prevRevision = useRef(revision)
   const p = useResource<Packet<RangePrices>>(
-    future
-      ? rangePath(symbol, '1mo')
-      : rangePath(symbol, selection.preset, selection.start, selection.end),
+    future ? null : rangePath(symbol, selection.preset, selection.start, selection.end),
   )
   const reload = p.reload
   useEffect(() => {
@@ -123,7 +121,7 @@ export function ResearchRange({
           query={query}
           connection={connection}
           settings={settings}
-          observed={data || null}
+          revision={revision}
         />
       ) : (
         <>

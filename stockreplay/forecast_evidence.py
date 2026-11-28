@@ -67,7 +67,7 @@ def parse_estimates(trend, symbol):
 
 def evidence_packet(desk, baseline):
     symbol = baseline["symbol"]
-    anchor = date.fromisoformat(baseline["as_of"])
+    anchor = date.fromisoformat(baseline.get("horizon_origin") or baseline["as_of"])
     end = min(
         max(date.fromisoformat(baseline["points"][-1]["date"]), anchor + timedelta(days=380)),
         anchor + timedelta(days=730),
@@ -121,12 +121,17 @@ def assemble(baseline, brief, agenda, consensus):
     anchor = baseline["as_of"]
     last = baseline["points"][0]["median"]
     add(
-        baseline["symbol"] + " published closing prices",
-        baseline["url"],
-        baseline["source"],
+        baseline["symbol"] + " observed market prices",
+        baseline.get("anchor_url") or baseline["url"],
+        baseline.get("anchor_source") or baseline["source"],
         anchor,
         "price",
-        f"Last completed close {last:.4g} {baseline['currency'] or ''}. Observed annualized volatility {baseline['annualized_volatility_pct']:.1f}%.",
+        (
+            f"Regular-session bar beginning {baseline['anchor_time']}"
+            if baseline.get("anchor_kind") == "intraday"
+            else "Published daily close " + anchor
+        )
+        + f" {last:.4g} {baseline['currency'] or ''}. Observed annualized volatility {baseline['annualized_volatility_pct']:.1f}%.",
     )
     # Reserve context for each subject, including issuer filings and independent web/news coverage.
     counts = {}

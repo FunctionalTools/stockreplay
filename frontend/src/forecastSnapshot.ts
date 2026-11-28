@@ -74,6 +74,39 @@ export function snapshotPath(symbol: string, s: Selection) {
   }
   return '/desk/forecast/' + encodeURIComponent(symbol) + '?' + q.toString()
 }
+export function projectionPath(symbols: string[], period: Selection) {
+  const q = new URLSearchParams({ symbols: symbols.join(','), horizon: period.preset, seed: '42' })
+  if (period.preset === 'custom' && period.start && period.end) {
+    q.set('start', period.start)
+    q.set('end', period.end)
+  }
+  return '/desk/projections?' + q
+}
+
+// A saved opinion belongs to its observed price and its projected sessions.
+// Old snapshots can lack explicit anchor fields; those releases used closing prices.
+export function matchesProjection(
+  saved: ForecastSnapshot | null | undefined,
+  base: Forecast,
+): saved is ForecastSnapshot {
+  if (!saved || saved.symbol !== base.symbol || saved.as_of !== base.as_of) return false
+  const kind = base.anchor_kind || 'confirmed_close'
+  if ((saved.anchor_kind || 'confirmed_close') !== kind) return false
+  if (kind === 'intraday' && (!base.anchor_time || saved.anchor_time !== base.anchor_time))
+    return false
+  if (saved.data_digest && base.data_digest && saved.data_digest !== base.data_digest) return false
+  const a = saved.points[0],
+    b = base.points[0]
+  return (
+    !!a &&
+    !!b &&
+    a.date === b.date &&
+    a.median === b.median &&
+    saved.points.length > 1 &&
+    saved.points.length === base.points.length &&
+    saved.points.every((point, index) => point.date === base.points[index].date)
+  )
+}
 export const providerName = (id?: string) =>
   id === 'openai'
     ? 'OpenAI'

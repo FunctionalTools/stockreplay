@@ -225,3 +225,57 @@ test('a direct forecast command generates once, opens the requested period and k
     'Generate a 1M forecast for AAPL',
   ])
 })
+
+test('forecast questions preserve the requested horizon and a delayed AI reply leaves Future usable', async ({
+  page,
+}) => {
+  let release!: () => void
+  const pending = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  let generations = 0
+  await page.route('**/api/desk/forecast/*?*', async (route) => {
+    if (route.request().method() !== 'POST') return route.continue()
+    generations++
+    await pending
+    return route.fulfill({ status: 503, json: { detail: 'AI connection interrupted.' } })
+  })
+  await page.goto('/#/settings/MSFT')
+  await page.getByRole('button', { name: 'Open assistant' }).click()
+  const chat = page.getByRole('region', { name: 'StockReplay assistant' })
+  await chat.getByRole('button', { name: 'Chat history' }).click()
+  await chat.getByRole('button', { name: 'New conversation' }).click()
+  const input = chat.getByLabel('Message the assistant')
+  await input.fill('Can I see the 5-day forecast for Apple?')
+  await input.press('Enter')
+  const link = chat.getByRole('link', { name: 'Open Future' })
+  await expect(link).toHaveAttribute('href', '#/research/AAPL?view=future&range=5d')
+  await link.click()
+  await expect(page).toHaveURL(/#\/research\/AAPL\?view=future&range=5d$/)
+  expect(generations).toBe(0)
+
+  await page.getByRole('button', { name: 'Open assistant' }).click()
+  await input.fill('Generate a 1W forecast for MSFT')
+  await input.press('Enter')
+  try {
+    await expect.poll(() => generations).toBe(1)
+    await expect(page).toHaveURL(/#\/research\/MSFT\?view=future&range=1w$/)
+    await expect(
+      page
+        .getByRole('group', { name: 'Forecast period' })
+        .getByRole('button', { name: '1W', exact: true }),
+    ).toHaveAttribute('aria-pressed', 'true')
+    const path = page
+      .getByRole('region', { name: 'Price forecast' })
+      .locator('[data-symbol="MSFT"][data-forecast-model="statistical"]')
+    await expect(path.locator('[data-line="median"]')).toHaveAttribute('d', /^M.+L/)
+    await expect(path.locator('[data-forecast-end]')).toHaveAttribute(
+      'data-forecast-end',
+      /^\d{4}-\d{2}-\d{2}$/,
+    )
+  } finally {
+    release()
+  }
+  await expect(chat.getByText('AI connection interrupted.')).toBeVisible()
+  expect(generations).toBe(1)
+})

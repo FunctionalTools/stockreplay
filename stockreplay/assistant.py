@@ -4,7 +4,7 @@ import re
 from typing import Literal
 from fastapi import HTTPException
 from pydantic import Field
-from .assistant_shortcuts import asks_for_future_view, forecast_question_symbol, local_actions
+from .assistant_shortcuts import asks_for_future_view, forecast_question_target, local_actions
 from .schema import Model
 from .openai_research import choices, object_schema, array, indexed_evidence
 from .store import now
@@ -219,11 +219,12 @@ def plan(gateway, chat):
     actions = local_actions(chat.messages[-1].text, chat.symbol, getattr(gateway, "provider", None))
     if actions:
         return {"reply": "", "actions": actions, "links": [], "local": True}
-    if asset := forecast_question_symbol(chat.messages[-1].text, chat.symbol):
+    if target := forecast_question_target(chat.messages[-1].text, chat.symbol):
+        asset, focus = target
         return {
-            "reply": f'Open a saved forecast, or say “Generate a 1M forecast for {asset}”.',
+            "reply": f"Open Future to see projected prices for {asset}.",
             "actions": [],
-            "links": [{"label": "Open Future", "page": "Research", "symbol": asset, "focus": "future"}],
+            "links": [{"label": "Open Future", "page": "Research", "symbol": asset, "focus": focus}],
             "local": True,
         }
     key, model = gateway.credentials()

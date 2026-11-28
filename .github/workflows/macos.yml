@@ -79,7 +79,7 @@ jobs:
         if: always() && github.event_name == 'workflow_dispatch' && inputs.live_providers && matrix.runner == 'macos-15'
         env:
           STOCKREPLAY_LIVE_TESTS: "1"
-        run: npm --prefix frontend run e2e -- terminal.spec.ts --grep "live public research"
+        run: npm --prefix frontend run e2e -- terminal.spec.ts reported-future-live.spec.ts --grep "live public research"
       - name: Verify the selected OpenAI model with a dedicated project key when available
         if: github.event_name == 'workflow_dispatch' && inputs.live_providers && matrix.runner == 'macos-15'
         env:

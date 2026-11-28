@@ -231,25 +231,39 @@ def test_forecast_generation_accepts_an_explicit_single_ticker_instruction(tmp_p
     assert local_actions("Update my price forecast for Apple for one week", "MSFT") == [
         {"kind": "forecast", "symbol": "AAPL", "span": "1w"}
     ]
+    assert local_actions("Show the 3-month forecast for NVDA", "AAPL") == [
+        {"kind": "navigate", "symbol": "NVDA", "page": "Research", "focus": "future_3mo"}
+    ]
     assert local_actions(
         "Generate a forecast for AAPL from 2027-02-01 to 2027-02-07", "MSFT"
     ) == [{"kind": "forecast", "symbol": "AAPL", "span": "2027-02-01/2027-02-07"}]
     assert local_actions("Generate a 1M forecast for AAPL and MSFT", "MSFT") is None
     with TestClient(create_app(tmp_path)) as c:
-        for text in [
-            "Can you generate a forecast for AAPL?",
-            "Where do I find my forecast assumptions?",
-            "Do you have a stock price prediction?",
-            "Generate a 1M forecast for AAPL?",
+        for text, symbol, focus in [
+            ("Can you generate a forecast for AAPL?", "AAPL", "future"),
+            ("Where do I find my forecast assumptions?", "MSFT", "future"),
+            ("Do you have a stock price prediction?", "MSFT", "future"),
+            ("Generate a 1M forecast for AAPL?", "AAPL", "future_1mo"),
+            ("Can I see the 6-month forecast for Apple?", "AAPL", "future_6mo"),
+            ("What is the forecast for NVDA over five days?", "NVDA", "future_5d"),
+            ("What is the forecast for NVDA next week?", "NVDA", "future_1w"),
+            ("What’s Apple’s forecast for the next 3 months?", "AAPL", "future_3mo"),
+            (
+                "Can I see the forecast for AAPL from 2027-02-02 to 2027-02-05?",
+                "AAPL",
+                "future_custom_2027-02-02_2027-02-05",
+            ),
         ]:
             answer = c.post(
                 "/api/assistant",
                 json={
                     "page": "Settings",
-                    "symbol": "AAPL",
+                    "symbol": "MSFT",
                     "messages": [{"role": "user", "text": text}],
                 },
             )
             assert answer.status_code == 200
             assert answer.json()["local"] and answer.json()["actions"] == []
-            assert answer.json()["links"][0]["focus"] == "future"
+            assert answer.json()["links"] == [
+                {"label": "Open Future", "page": "Research", "symbol": symbol, "focus": focus}
+            ]

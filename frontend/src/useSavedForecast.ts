@@ -62,6 +62,7 @@ export function useSavedForecast(path: string) {
   }
   return {
     forecast: result || saved.data?.forecast || null,
+    generated: result,
     busy,
     loading: saved.loading,
     error: error || saved.error,

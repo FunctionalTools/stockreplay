@@ -1,8 +1,14 @@
 import { useEffect, useState } from 'react'
 import { CalendarDays, ChartNoAxesCombined, X } from 'lucide-react'
 import { useSavedForecast } from './useSavedForecast'
-import { futureHref, providerName, snapshotPath, type ForecastSnapshot } from './forecastSnapshot'
-import { calendarHref, horizons, type Horizon } from './forecastData'
+import {
+  futureHref,
+  matchesProjection,
+  providerName,
+  snapshotPath,
+  type ForecastSnapshot,
+} from './forecastSnapshot'
+import { calendarHref, horizons, type Forecast, type Horizon } from './forecastData'
 import type { Selection } from './priceRanges'
 import { shortDay, tickerPattern } from './workspace'
 import { ErrorBox } from './ui'
@@ -26,8 +32,10 @@ function ComparisonRow({
   remove,
   remember,
   href,
+  base,
 }: {
   symbol: string
+  base?: Forecast
   selection: Selection
   ready: boolean
   remove: () => void
@@ -49,11 +57,13 @@ function ComparisonRow({
             ? providerName(forecast.provider) +
               ' · ' +
               forecast.model +
-              ' · through ' +
+              (base && !matchesProjection(forecast, base)
+                ? ' · earlier snapshot through '
+                : ' · through ') +
               shortDay(forecast.points.at(-1)?.date)
             : loading
               ? 'Checking saved forecast…'
-              : 'No saved forecast for this period'}
+              : (base ? 'Statistical projection · ' : '') + 'No saved forecast for this period'}
         </small>
       </div>
       <button className="btn small" disabled={busy || loading || !ready} onClick={generate}>
@@ -75,6 +85,7 @@ function ComparisonRow({
 export function ForecastComparison({
   primary,
   extras,
+  baselines,
   selection,
   change,
   ready,
@@ -82,6 +93,7 @@ export function ForecastComparison({
 }: {
   primary: string
   extras: string[]
+  baselines: Forecast[]
   selection: Selection
   change: (symbols: string[]) => void
   ready: boolean
@@ -113,7 +125,14 @@ export function ForecastComparison({
           <ChartNoAxesCombined size={14} />
           {extras.length ? 'Comparing ' + (extras.length + 1) + ' tickers' : 'Compare forecasts'}
         </button>
-        <a href={calendarHref({ symbols: [primary, ...extras], horizon })}>
+        <a
+          href={calendarHref({
+            symbols: [primary, ...extras],
+            horizon,
+            start: selection.start,
+            end: selection.end,
+          })}
+        >
           <CalendarDays size={14} /> Forecast calendar
         </a>
       </div>
@@ -147,6 +166,7 @@ export function ForecastComparison({
               <ComparisonRow
                 key={s}
                 symbol={s}
+                base={baselines.find((v) => v.symbol === s)}
                 href={futureHref(s, selection.preset, selection.start, selection.end, [
                   primary,
                   ...extras.filter((v) => v !== s),

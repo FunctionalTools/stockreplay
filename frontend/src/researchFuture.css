@@ -265,3 +265,52 @@
 .research-top > .scores {
   align-self: start;
 }
+.chart-modes button[aria-pressed='true']:last-child {
+  background: var(--accent);
+  color: var(--on-accent, var(--panel));
+}
+.future-estimate {
+  display: grid;
+  gap: 2px;
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+.future-estimate strong,
+.future-estimate b {
+  color: var(--text);
+  font-weight: 600;
+}
+.future-estimate .source-link {
+  font-size: inherit;
+}
+.future-archive {
+  margin-top: 10px;
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+  font-size: 0.82rem;
+}
+.future-archive summary {
+  cursor: pointer;
+}
+.fc-inline .forecast-key span:nth-child(2) i {
+  border-color: var(--accent);
+}
+.fc-inline .forecast-key span:nth-child(3) i {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.fc-history-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  font-size: 0.76rem;
+  color: var(--text);
+  cursor: pointer;
+}
+.fc-history-toggle input {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--accent);
+}

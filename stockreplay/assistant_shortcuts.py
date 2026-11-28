@@ -115,12 +115,36 @@ def asks_for_future_view(raw):
     ))
 
 
+def future_focus(span):
+    if not span:
+        return "future"
+    return "future_custom_" + span.replace("/", "_") if "/" in span else "future_" + span
+
+
+def forecast_period_words(text):
+    units = {"day": "d", "week": "w", "month": "mo", "year": "y"}
+    text = re.sub(
+        r"\b(\d+)-(day|week|month|year)s?\b",
+        lambda m: m[1] + units[m[2].lower()],
+        text,
+        flags=re.I,
+    )
+    text = re.sub(
+        r"\b(?:the )?next (day|week|month|year)\b",
+        lambda m: "1" + units[m[1].lower()],
+        text,
+        flags=re.I,
+    )
+    return re.sub(rf"\b(?:the )?next ({RANGE})\b", r"\1", text, flags=re.I)
+
+
 def forecast_command(text, current, question):
     # Only a whole imperative can dispatch the billable generation endpoint.
+    text = forecast_period_words(text)
     command = r"(?P<verb>generate|regenerate|update|refresh|open|view|show|display) (?:me )?(?:a |the |my )?(?:saved )?"
     noun = r"(?:(?:stock |AI )?(?:price )?forecast|(?:stock )?price prediction)"
     match = re.fullmatch(
-        command + noun + rf" for (?P<asset>.+?) (?:for |over |from )(?P<span>{RANGE})", text, re.I
+        command + noun + rf" for (?P<asset>.+?) (?:for |over |from )?(?P<span>{RANGE})", text, re.I
     ) or re.fullmatch(
         command + rf"(?:(?P<span>{RANGE}) )?" + noun + r"(?: for (?P<asset>.+))?", text, re.I
     )
@@ -131,13 +155,12 @@ def forecast_command(text, current, question):
         return None
     span = period(match["span"] or "6mo")
     if match["verb"].lower() in {"open", "view", "show", "display"}:
-        focus = "future_custom_" + span.replace("/", "_") if "/" in span else "future_" + span
-        return {"kind": "navigate", "symbol": asset, "page": "Research", "focus": focus}
+        return {"kind": "navigate", "symbol": asset, "page": "Research", "focus": future_focus(span)}
     return None if question else {"kind": "forecast", "symbol": asset, "span": span}
 
 
-def forecast_question_symbol(raw, current):
-    # Product and price-forecast questions can open the saved chart without running inference.
+def forecast_question_target(raw, current):
+    # Questions get a link to the requested ticker and horizon without starting AI generation.
     text = raw.strip().rstrip("?.!")
     if not re.match(r"(?:please )?(?:where|what|how|when|why|which|can|could|would|should|is|are|do|does|generate|regenerate|update|refresh)\b", text, re.I):
         return None
@@ -145,8 +168,13 @@ def forecast_question_symbol(raw, current):
         return None
     if re.search(r"\b(?:earnings|revenue|sales|cash flow|EPS|filings?|research online|news|weather)\b", text, re.I):
         return None
-    mentioned = re.search(r"\bfor (.+)$", text, re.I)
-    return (symbol(mentioned[1], current) if mentioned else None) or current
+    text = forecast_period_words(text)
+    span = re.search(rf"(?<![\w$])({RANGE})(?!\w)", text, re.I)
+    query = (text[:span.start()] + text[span.end():]).strip() if span else text
+    mentions = re.findall(r"\bfor (.+?)(?= (?:for|over|from|during|in)\b|$)", query, re.I)
+    mentions += re.findall(r"([\w$^.=–-]+)['’]s\b", query, re.I)
+    asset = next((s for word in mentions if (s := symbol(word.strip(), current))), current)
+    return asset, future_focus(period(span[1]) if span else None)
 
 
 def local_actions(raw, current, provider=None):

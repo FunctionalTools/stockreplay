@@ -210,6 +210,13 @@ def install_market():
             "as_of": rows[-1]["date"],
             "source": "Yahoo Finance",
             "url": "https://finance.yahoo.com/quote/" + symbol + "/history/",
+            "price_sources": [
+                {
+                    "source": "Yahoo Finance",
+                    "url": f"https://finance.yahoo.com/quote/{symbol}/history/",
+                }
+            ],
+            "splits": [],
             "currency": "USD",
             "timezone": "America/New_York",
             "adjusted": True,

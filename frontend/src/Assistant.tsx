@@ -470,10 +470,11 @@ export function Assistant({
       const s = stock(a.symbol)
       const selection = fromFutureFocus(link?.focus || '')
       if (!selection) throw Error('Choose a supported forecast period.')
+      // Show the price projection immediately, including when AI generation later fails.
+      navigate('Research', s, link?.focus)
       const { forecast } = await api<ForecastResponse>(snapshotPath(s, selection), 'POST')
       if (!forecast) throw Error('The provider did not return a saved forecast.')
       window.dispatchEvent(new CustomEvent('stockreplay:forecast-saved', { detail: forecast }))
-      navigate('Research', s, link?.focus)
       await text('Saved the ' + rangeLabel(selection.preset) + ' forecast for ' + s + '.')
       return
     }

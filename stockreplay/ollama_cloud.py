@@ -3,8 +3,8 @@
 import json
 import re
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from ipaddress import ip_address
-from urllib.parse import urlsplit
 
 import httpx
 from fastapi import HTTPException
@@ -82,7 +82,42 @@ class OllamaCloudResearch(OpenAIResearch):
         self.web_check = checks.get("web_search", {"verified": False, "verified_at": None})
         self.generation_detail = checks.get("generation_detail")
 
+    def record_outcome(self, key, model, detail):
+        with self.lock:
+            if not self.matches_current(key, model):
+                return
+            stamp = None if detail else now()
+            if model is not None:
+                self.verified = stamp
+                self.generation_detail = detail
+            else:
+                self.web_check = {
+                    "verified": bool(stamp),
+                    "verified_at": stamp,
+                    **({"detail": detail} if detail else {}),
+                }
+
+    @contextmanager
+    def observe(self, key, model=None):
+        try:
+            yield
+        except HTTPException as exc:
+            self.record_outcome(key, model, exc.detail)
+            raise
+        else:
+            self.record_outcome(key, model, None)
+
     def request(self, key, method, path, payload=None):
+        if (method, path) != ("POST", "web_search"):
+            return self._request(key, method, path, payload)
+        with self.observe(key):
+            data = self._request(key, method, path, payload)
+            # An empty list is a legitimate response to an authenticated query.
+            if not isinstance(data.get("results"), list):
+                raise HTTPException(502, "Ollama web search returned an unreadable results list.")
+            return data
+
+    def _request(self, key, method, path, payload):
         if (method, path) not in {
             ("GET", "tags"),
             ("POST", "chat"),
@@ -144,6 +179,22 @@ class OllamaCloudResearch(OpenAIResearch):
                 401,
                 "Ollama rejected this API key. Use a current website API key from ollama.com/settings/keys.",
             )
+        if status == 402 or (
+            status in {400, 403, 429}
+            and any(
+                term in message
+                for term in (
+                    "insufficient credit",
+                    "insufficient balance",
+                    "payment required",
+                    "out of credits",
+                )
+            )
+        ):
+            raise HTTPException(
+                402,
+                f"Ollama requires billing or available credits for {scope} on this account. Check your Ollama usage and billing.",
+            )
         if status == 403:
             raise HTTPException(
                 403,
@@ -195,7 +246,7 @@ class OllamaCloudResearch(OpenAIResearch):
                 503,
                 f"Ollama Cloud has no available {scope} capacity right now. Retry later or choose another hosted model.",
             )
-        if status in (402, 429):
+        if status == 429:
             raise HTTPException(
                 429,
                 f"Ollama Cloud reports an account usage or rate limit for {scope}. Check your Ollama plan and retry after its limit resets.",
@@ -227,6 +278,10 @@ class OllamaCloudResearch(OpenAIResearch):
         return {"source": "ollama_cloud", "models": [{"id": n, "label": n} for n in names]}
 
     def structured(self, key, model, name, schema, instructions, inputs, budget=3500):
+        with self.observe(key, model):
+            return self._generate(key, model, name, schema, instructions, inputs, budget)
+
+    def _generate(self, key, model, name, schema, instructions, inputs, budget):
         # Cloud models don't accept local Ollama's format:<JSON schema>. Give them one
         # return-only tool; no model-supplied function name is ever executed.
         from .local_ai import expand_refs, valid_shape
@@ -264,6 +319,14 @@ class OllamaCloudResearch(OpenAIResearch):
             body = {
                 "model": model,
                 "stream": False,
+                # The gpt-oss default is medium reasoning. A tiny connection test or
+                # routing request can use up its token allowance before returning a tool.
+                **(
+                    {"think": "low"}
+                    if model.startswith("gpt-oss:")
+                    and name in {"connection_check", "app_assistant"}
+                    else {}
+                ),
                 "messages": messages,
                 "options": {"num_predict": budget * (1 + attempt)},
                 **({"tools": [tool]} if not attempt else {}),
@@ -287,8 +350,6 @@ class OllamaCloudResearch(OpenAIResearch):
                     raise ValueError()
             except (ValueError, KeyError, TypeError, AttributeError, OverflowError):
                 continue
-            if name != "connection_check":
-                self.mark_verified(key, model, now())
             return output
         raise HTTPException(
             502,
@@ -296,24 +357,12 @@ class OllamaCloudResearch(OpenAIResearch):
         )
 
     def probe_search(self, key):
-        data = self.request(
+        self.request(
             key,
             "POST",
             "web_search",
             {"query": "Ollama web search documentation", "max_results": 1},
         )
-        hits = data.get("results")
-        if not isinstance(hits, list) or not any(
-            isinstance(x, dict)
-            and isinstance(x.get("url"), str)
-            and x.get("title")
-            and urlsplit(x["url"]).scheme in {"http", "https"}
-            and urlsplit(x["url"]).hostname
-            for x in hits
-        ):
-            raise HTTPException(
-                502, "Ollama web search returned no verifiable result for its connection check."
-            )
 
     def check_connection(self, key, model):
         errors = {}

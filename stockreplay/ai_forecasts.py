@@ -13,7 +13,7 @@ from fastapi import HTTPException
 from .forecast_evidence import evidence_packet
 from .openai_research import array, choices, object_schema
 from .price_ranges import validate_range
-from .projections import MissingClose, horizon_end, project_one
+from .projections import load_projection
 from .store import encode, now
 from .symbols import ticker
 
@@ -216,14 +216,6 @@ def validated(answer, sources, quarters, schema):
     return levels, drivers, cards
 
 
-def selected_end(range_code, anchor, last_session, custom_end):
-    if range_code in {"1d", "5d"}:
-        return last_session
-    if range_code == "ytd":
-        return f"{last_session[:4]}-12-31"
-    return horizon_end(date.fromisoformat(anchor), range_code, custom_end).date().isoformat()
-
-
 def summary_for(points, steps, levels, sources):
     index = 0 if steps <= 32 else 1 if steps <= 157 else 2
     other = 1 if index != 1 else 0 if steps < 63 else 2
@@ -287,19 +279,9 @@ def generate(terminal, symbol, preset, start, end):
     key, model = gateway.credentials()
     instant = datetime.now(UTC)
 
-    def baseline(force):
-        packet = terminal.desk.chart(symbol, "1d", "10y", force)
-        if not packet.get("data"):
-            raise ValueError(packet.get("error") or "No verified closing prices are available.")
-        row = project_one(
-            packet["data"], symbol, preset, 42, instant, None, start_date=start, end_date=end
-        )
-        return {**row, "stale": bool(packet.get("stale")), "fetched": packet.get("fetched")}
-
-    try:
-        base = baseline(False)
-    except MissingClose:
-        base = baseline(True)
+    base = load_projection(
+        terminal.desk, symbol, preset, 42, instant, start=start, end=end, full_path=True
+    )
     sources, quarters = evidence_packet(terminal.desk, base)
     if not sources:
         raise ValueError("No attributable public evidence was available for this forecast.")
@@ -319,9 +301,12 @@ def generate(terminal, symbol, preset, start, end):
         "range": preset,
         "as_of": base["as_of"],
         "requested_start": start.isoformat() if start else None,
-        "civil_end": selected_end(preset, base["as_of"], base["points"][-1]["date"], end),
+        "civil_end": base["requested_end"],
         "last_projected_session": base["points"][-1]["date"],
-        "observed_close": base["points"][0]["median"],
+        "observed_price": base["points"][0]["median"],
+        "anchor_kind": base["anchor_kind"],
+        "anchor_time": base["anchor_time"],
+        "data_note": base["data_note"],
         "currency": base["currency"],
         "annualized_volatility_pct": round(base["annualized_volatility_pct"], 2),
         "baseline_end": base["points"][-1],
@@ -344,7 +329,9 @@ def generate(terminal, symbol, preset, start, end):
                     "The selected model could not support its forecast with valid source citations. Try another model or generate again.",
                 ) from None
             instructions += " Select only the allowed evidence IDs and source_direction choices specified for each field."
-    points = model_points(base["points"], levels, drivers, sources, start)
+    points = model_points(
+        base["points"], levels, drivers, sources, date.fromisoformat(base["requested_start"])
+    )
     summary, refs = summary_for(points, len(base["points"]) - 1, levels, sources)
     return {
         **base,
@@ -352,7 +339,7 @@ def generate(terminal, symbol, preset, start, end):
         "created": now(),
         "range": preset,
         "requested_start": start.isoformat() if start else points[1]["date"],
-        "requested_end": selected_end(preset, base["as_of"], points[-1]["date"], end),
+        "requested_end": base["requested_end"],
         "provider": gateway.provider,
         "model": model,
         "method": "Provider scenario conditioned on observed price volatility",

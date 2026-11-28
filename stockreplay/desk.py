@@ -15,6 +15,7 @@ import pandas as pd
 import yfinance as yf
 
 from .price_ranges import week_start
+from .recent_prices import recover_recent
 from .public_cache import PublicCache
 from .news_images import NewsImages, image_url
 from .web_research import PublicResearch
@@ -131,11 +132,20 @@ def chart_data(symbol, interval, span, start=None, end=None):
         and current_close <= observed.timestamp()
     ):
         latest = local_today
+    supplemented = {}
+    if interval == "1d":
+        frame, supplemented = recover_recent(
+            frame, instrument, symbol, metadata, latest, start, end, span, fetch_url
+        )
     adjusted = True
     bars = []
+    splits = []
     for stamp, row in frame.sort_index().iterrows():
         if interval == "1d" and stamp.date() > latest:
             continue
+        split = number(row.get("Stock Splits"))
+        if split and split > 0:
+            splits.append({"date": stamp.date().isoformat(), "ratio": split})
         raw = [number(row.get(k)) for k in ("Open", "High", "Low", "Close")]
         if any(p is None or p <= 0 for p in raw):
             continue
@@ -161,7 +171,12 @@ def chart_data(symbol, interval, span, start=None, end=None):
                 "raw_close": raw[3],
                 "volume": number(row.get("Volume")),
                 "dividend": number(row.get("Dividends")) or 0,
-                "split": number(row.get("Stock Splits")) or 0,
+                "split": split or 0,
+                **(
+                    {"source": "Stock Analysis", "url": supplemented[stamp.date().isoformat()]}
+                    if stamp.date().isoformat() in supplemented
+                    else {}
+                ),
             }
         )
     if not bars:
@@ -170,7 +185,13 @@ def chart_data(symbol, interval, span, start=None, end=None):
         # Yahoo has no one-week period. Slice real daily closes through the last observed session.
         boundary = week_start(bars[-1]["date"])
         bars = [bar for bar in bars if bar["date"] >= boundary]
+    url = YAHOO + quote(symbol) + "/history/"
+    sources = [{"source": "Yahoo Finance", "url": url}]
+    if any(b.get("source") == "Stock Analysis" for b in bars):
+        sources.append({"source": "Stock Analysis", "url": next(iter(supplemented.values()))})
     return {
+        "price_sources": sources,
+        "splits": splits,
         "exchange": metadata.get("exchangeName"),
         "instrument_type": metadata.get("instrumentType"),
         "adjusted": adjusted,
@@ -181,7 +202,7 @@ def chart_data(symbol, interval, span, start=None, end=None):
         "as_of": bars[-1]["date"],
         "bars": bars,
         "source": "Yahoo Finance",
-        "url": YAHOO + quote(symbol) + "/history/",
+        "url": url,
         "timezone": str(frame.index.tz),
         "latest_completed_session": last.isoformat(),
     }
@@ -711,6 +732,7 @@ class Desk:
             120 if interval not in ("1d", "1wk", "1mo") else 600,
             lambda: chart_data(symbol, interval, span),
             refresh,
+            required_field="price_sources" if interval == "1d" else None,
         )
 
     def date_chart(self, symbol, start, end, refresh=False):
@@ -719,6 +741,7 @@ class Desk:
             600,
             lambda: chart_data(symbol, "1d", "custom", start, end),
             refresh,
+            required_field="price_sources",
         )
 
     def ratings(self, symbol, refresh=False):
@@ -1167,7 +1190,9 @@ class Desk:
                     item.get("preview"),
                     date_kind="published",
                     scope="Feed excerpt" if item.get("excerpt") else "Headline only",
-                    discovered_via="Federal Reserve feed" if k == "macro_news" else "Yahoo Finance feed",
+                    discovered_via="Federal Reserve feed"
+                    if k == "macro_news"
+                    else "Yahoo Finance feed",
                     stale=v[k]["stale"],
                     **relevance,
                 )

@@ -297,6 +297,16 @@ class KeyConnection:
                 ) from None
         return None
 
+    def matches_current(self, key, model=None):
+        """Called with the connection lock held. Late requests must not change a replacement key."""
+        selected, saved = self.config()
+        if (model is not None and selected != model) or not (self.session_key or saved):
+            return False
+        try:
+            return self._key(saved) == key
+        except HTTPException:
+            return False
+
     def contains_secret(self, text):
         with self.lock:
             _, saved = self.config()
@@ -485,14 +495,8 @@ class OpenAIResearch(KeyConnection):
 
     def mark_verified(self, key, model, stamp):
         with self.lock:
-            active, saved = self.config()
-            if active == model and (self.session_key or saved):
-                try:
-                    current = self._key(saved)
-                except HTTPException:
-                    return
-                if key == current:
-                    self.verified = stamp
+            if self.matches_current(key, model):
+                self.verified = stamp
 
     def structured(self, key, model, name, schema, instructions, inputs, budget=3500):
         for attempt in range(2):
