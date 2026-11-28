@@ -1055,16 +1055,6 @@ td .icon-btn {
   color: var(--muted);
   font-size: 0.88rem;
 }
-.assistant {
-  position: fixed;
-  bottom: max(18px, env(safe-area-inset-bottom));
-  right: clamp(15px, 3.8vw, 55px);
-  z-index: 12;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 10px;
-}
 .chat-launch {
   border-radius: 40px;
   padding: 10px 16px;
@@ -1122,21 +1112,6 @@ td .icon-btn {
   flex-direction: column;
   align-items: flex-start;
   gap: 7px;
-}
-.bubble {
-  margin-bottom: 10px;
-  font-size: 0.9rem;
-  border-radius: 9px;
-  padding: 9px 12px;
-  background: var(--bg);
-  overflow-wrap: anywhere;
-}
-.bubble p {
-  white-space: pre-wrap;
-}
-.bubble.user {
-  background: var(--accent-soft);
-  margin-left: 25px;
 }
 .chat-graph {
   margin: 8px -5px 0;
@@ -1293,9 +1268,6 @@ td .icon-btn {
   }
   .chat-launch {
     padding: 12px;
-  }
-  .assistant {
-    right: 14px;
   }
   .quote-row {
     gap: 8px;

@@ -1,6 +1,7 @@
 import { useState, type MouseEvent } from 'react'
 import { ArrowUpRight, ChevronDown, CornerDownRight } from 'lucide-react'
-import { validRangeFocus } from './ResearchRange'
+import { validRangeFocus } from './priceRanges'
+import { fromFutureFocus, futureHref } from './forecastSnapshot'
 import { ChatGraph } from './PricePlot'
 import { amount, tickerPattern, type Page } from './workspace'
 import type { ChatLink, Entry, Row } from './chatHistory'
@@ -20,14 +21,17 @@ const focuses = [
 ]
 export function linkUrl(link: ChatLink, symbol: string) {
   if (link.tab) return /^[a-f0-9]{32}$/.test(link.tab) ? '#/tabs/' + link.tab : null
+  const future = link.page === 'Research' ? fromFutureFocus(link.focus || '') : null
   if (
     !pages.includes(link.page) ||
     (!focuses.includes(link.focus || '') &&
+      !future &&
       !(link.page === 'Research' && validRangeFocus(link.focus || '')))
   )
     return null
   const asset = (link.symbol || symbol).toUpperCase()
   if (!tickerPattern.test(asset)) return null
+  if (future) return futureHref(asset, future.preset, future.start, future.end)
   return (
     '#/' +
     link.page.toLowerCase() +
@@ -185,7 +189,8 @@ export function ChatMessage({
   )
   return (
     <article
-      className={'bubble' + (e.role === 'user' ? ' user' : '') + (e.error ? ' chat-error' : '')}
+      className={'chat-entry' + (e.error ? ' chat-error' : '')}
+      data-speaker={e.role}
       aria-label={e.role === 'user' ? 'Your message' : 'Assistant response'}
     >
       <Text entry={e} symbol={symbol} follow={follow} />
@@ -213,7 +218,8 @@ export function ChatMessage({
               >
                 <span>
                   <small>
-                    {s.source} · {(s.date || '').slice(0, 10)}{s.scope ? ' · ' + s.scope : ''}
+                    {s.source} · {(s.date || '').slice(0, 10)}
+                    {s.scope ? ' · ' + s.scope : ''}
                   </small>
                   {s.text}
                 </span>

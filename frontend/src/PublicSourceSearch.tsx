@@ -74,7 +74,9 @@ export function PublicSourceSearch({
             </button>
           </div>
           <small>
-            Your company search and topic words go to public sources. No AI account is required.
+            {current?.coverage.some((c) => c.provider === 'Ollama Web Search')
+              ? 'The company and topic go to public sources and Ollama Web Search. Your Ollama search limits apply.'
+              : 'Your company search and topic words go to public sources. No AI account is required.'}
           </small>
         </form>
         <ErrorBox text={error} />

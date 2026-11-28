@@ -15,7 +15,8 @@ import { useChatHistory, type ChatLink, type Entry, type Context } from './chatH
 import { ChatMessage, ChatAnchor, linkUrl } from './ChatMessage'
 import { ChatResize, setAssistantSize } from './ChatResize'
 import { executeTabAction, isTabAction, prepareTabDelete } from './customTabs'
-import { validRangeFocus } from './ResearchRange'
+import { rangeLabel, validRangeFocus } from './priceRanges'
+import { fromFutureFocus, snapshotPath, type ForecastResponse } from './forecastSnapshot'
 import './assistant.css'
 import {
   type Connection,
@@ -36,6 +37,7 @@ export type Action = {
   end_price?: number | null
   command?: string
   page?: Page
+  focus?: string
   symbol?: string
   symbols?: string[]
   span?: string
@@ -167,7 +169,11 @@ export function Assistant({
   }
   function target(a: Action): ChatLink | undefined {
     const ticker = a.symbol || symbol
-    if (a.kind === 'navigate' && a.page) return { label: 'Open ' + a.page, page: a.page, symbol: ticker }
+    if (a.kind === 'navigate' && a.page) {
+      if (a.page === 'Research' && fromFutureFocus(a.focus || ''))
+        return { label: 'Open Future', page: 'Research', symbol: ticker, focus: a.focus }
+      return { label: 'Open ' + a.page, page: a.page, symbol: ticker }
+    }
     if (a.kind === 'import') {
       const watch = a.file_type === 'watchlist'
       return {
@@ -194,6 +200,10 @@ export function Assistant({
       ].includes(a.kind)
     )
       return { page: 'Watchlists', label: 'View watchlists', symbol }
+    if (a.kind === 'forecast') {
+      const focus = rangeFocus(a.span).replace(/^range_/, 'future_')
+      return { page: 'Research', label: 'Open saved forecast', symbol: ticker, focus }
+    }
     if (a.kind === 'range') {
       const focus = rangeFocus(a.span)
       return {
@@ -389,8 +399,13 @@ export function Assistant({
     if (a.kind === 'navigate') {
       if (!a.page || !['Research', 'Watchlists', 'Portfolio', 'Settings', 'Calendar'].includes(a.page))
         throw Error('Unknown page.')
-      navigate(a.page, a.page === 'Calendar' ? stock(a.symbol) : undefined)
-      await text('Opened ' + a.page + '.')
+      const future = a.page === 'Research' && fromFutureFocus(a.focus || '')
+      navigate(
+        a.page,
+        a.page === 'Calendar' || future ? stock(a.symbol) : undefined,
+        future ? a.focus : undefined,
+      )
+      await text(future ? 'Opened Future on the price chart.' : 'Opened ' + a.page + '.')
       return
     }
     if (['open_stock', 'ratings', 'news'].includes(a.kind)) {
@@ -428,6 +443,17 @@ export function Assistant({
         { question: a.question },
       )
       await append({ text: result.text, sources: result.sources, links })
+      return
+    }
+    if (a.kind === 'forecast') {
+      const s = stock(a.symbol)
+      const selection = fromFutureFocus(link?.focus || '')
+      if (!selection) throw Error('Choose a supported forecast period.')
+      const { forecast } = await api<ForecastResponse>(snapshotPath(s, selection), 'POST')
+      if (!forecast) throw Error('The provider did not return a saved forecast.')
+      window.dispatchEvent(new CustomEvent('stockreplay:forecast-saved', { detail: forecast }))
+      navigate('Research', s, link?.focus)
+      await text('Saved the ' + rangeLabel(selection.preset) + ' forecast for ' + s + '.')
       return
     }
     if (a.kind === 'score') {
@@ -608,12 +634,12 @@ export function Assistant({
       }
       const v = active.provider === 'ollama'
         ? await api<Connection>('/ai/ollama', 'PUT', { model: a.model })
-        : await api<Connection>('/openai', 'PUT', {
+        : await api<Connection>(active.provider === 'ollama_cloud' ? '/ai/ollama-cloud' : '/openai', 'PUT', {
             model: a.model,
             remember: active.storage === 'macOS Keychain',
           })
       connected(v)
-      await text('Verified generation with ' + v.model + '.')
+      await text(v.verified ? 'Verified generation with ' + v.model + '.' : v.generation_detail || 'Model generation is unavailable. Check AI settings.')
       return
     }
     if (
@@ -863,11 +889,13 @@ export function Assistant({
             setPhase(
               action.kind === 'research'
                 ? 'Reading sources…'
-                : action.kind === 'score'
-                  ? 'Generating scores…'
-                  : action.kind === 'chart'
-                    ? 'Loading prices…'
-                    : 'Applying your request…',
+                : action.kind === 'forecast'
+                  ? 'Generating the forecast…'
+                  : action.kind === 'score'
+                    ? 'Generating scores…'
+                    : action.kind === 'chart'
+                      ? 'Loading prices…'
+                      : 'Applying your request…',
             )
             await execute(action, false, i === 0 ? links : [], next)
           }
@@ -924,7 +952,7 @@ export function Assistant({
   const navProps = { symbol, follow }
   const historyError = history.error || error
   return (
-    <aside className="assistant sr-assistant">
+    <aside className="sr-assistant">
       {open && (
         <section
           className="chat-panel"
@@ -1124,15 +1152,17 @@ export function Assistant({
                     Show earlier messages
                   </button>
                 )}
-                {entries.slice(-limit).map((e) => (
-                  <ChatMessage
-                    key={e.id}
-                    entry={e}
-                    {...navProps}
-                    busy={locked || history.dirty}
-                    decide={(row, allow) => void decide(row, allow)}
-                  />
-                ))}
+                <div className="chat-transcript">
+                  {entries.slice(-limit).map((e) => (
+                    <ChatMessage
+                      key={e.id}
+                      entry={e}
+                      {...navProps}
+                      busy={locked || history.dirty}
+                      decide={(row, allow) => void decide(row, allow)}
+                    />
+                  ))}
+                </div>
                 {busy && (
                   <span role="status">
                     <Busy text={phase} />
@@ -1188,7 +1218,7 @@ export function Assistant({
                   <ArrowUp size={17} />
                 </button>
               </form>
-              <small className="chat-privacy">Saved on this Mac · {connection?.provider === 'openai' ? 'AI uses OpenAI' : 'AI runs locally with Ollama'}</small>
+              <small className="chat-privacy">Saved on this Mac · {connection?.provider === 'ollama_cloud' ? 'AI uses Ollama Cloud' : connection?.provider === 'openai' ? 'AI uses OpenAI' : 'AI runs locally with Ollama'}</small>
             </>
           )}
         </section>

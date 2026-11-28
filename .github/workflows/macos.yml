@@ -11,6 +11,10 @@ on:
         description: Download a free local model and exercise sourced generation on Apple silicon
         type: boolean
         default: false
+      live_forecast:
+        description: Generate a homepage forecast from live data with local Ollama on Apple silicon
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
@@ -81,9 +85,15 @@ jobs:
         env:
           STOCKREPLAY_TEST_OPENAI_KEY: ${{ secrets.STOCKREPLAY_TEST_OPENAI_KEY }}
         run: .venv/bin/python -m pytest -q -rs tests/test_terminal.py -k live_openai_generation
+      - name: Verify Ollama website search and hosted generation when a dedicated key is available
+        if: github.event_name == 'workflow_dispatch' && inputs.live_providers && matrix.runner == 'macos-15'
+        env:
+          STOCKREPLAY_TEST_OLLAMA_CLOUD_KEY: ${{ secrets.STOCKREPLAY_TEST_OLLAMA_CLOUD_KEY }}
+          STOCKREPLAY_TEST_OLLAMA_SEARCH_KEY: ${{ secrets.STOCKREPLAY_TEST_OLLAMA_SEARCH_KEY }}
+        run: .venv/bin/python -m pytest -q -rs tests/test_ollama_cloud.py::test_live_search_only_key tests/test_ollama_web.py::test_real_ollama_website_search tests/test_ollama_cloud.py::test_live_ollama_cloud_generation_and_web_search
   local-generation:
     name: Free local generation on Apple silicon
-    if: github.event_name == 'workflow_dispatch' && inputs.live_ollama
+    if: github.event_name == 'workflow_dispatch' && (inputs.live_ollama || inputs.live_forecast)
     runs-on: macos-15
     timeout-minutes: 35
     steps:
@@ -100,6 +110,10 @@ jobs:
           OLLAMA_NO_CLOUD: "1"
           OLLAMA_HOST: "127.0.0.1:11434"
           STOCKREPLAY_LIVE_OLLAMA: "1"
+          STOCKREPLAY_PUBLIC_LIVE: "1"
+          VERIFY_SCORES: ${{ inputs.live_ollama }}
+          VERIFY_FORECAST: ${{ inputs.live_forecast }}
+          PYTHONUNBUFFERED: "1"
           STOCKREPLAY_TEST_OLLAMA_MODEL: qwen2.5:3b
         run: |
           set -euo pipefail
@@ -117,4 +131,9 @@ jobs:
           curl --retry 20 --retry-connrefused --retry-delay 1 -fsS "http://$OLLAMA_HOST/api/version"
           "$executable" pull "$STOCKREPLAY_TEST_OLLAMA_MODEL"
           cd "$GITHUB_WORKSPACE"
-          .venv/bin/python -m pytest -q -s tests/test_live_ollama.py tests/test_local_ai.py::test_real_local_model_uses_the_generation_paths
+          if [ "$VERIFY_SCORES" = true ]; then
+            .venv/bin/python -m pytest -q -s tests/test_live_ollama.py tests/test_local_ai.py::test_real_local_model_uses_the_generation_paths
+          fi
+          if [ "$VERIFY_FORECAST" = true ]; then
+            .venv/bin/python -m pytest -q -s tests/test_ai_forecasts.py::test_live_local_provider_forecast
+          fi

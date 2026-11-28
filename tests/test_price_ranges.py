@@ -177,3 +177,46 @@ def test_provider_requests_historical_inclusive_end_once(monkeypatch):
     assert historic["bars"][0]["date"] == "2000-01-04"
     assert historic["bars"][0]["close"] == 54
     assert historic["timezone"] == "Asia/Tokyo"
+
+
+def test_one_calendar_week_of_closes_across_holiday():
+    market = MarketDesk(
+        daily=[
+            bar("2026-11-19", 75, adjusted=35),
+            bar("2026-11-20", 80, adjusted=40),
+            bar("2026-11-23", 90, adjusted=45),
+            bar("2026-11-27", 100, adjusted=50),
+        ]
+    )
+    weekly = ranges.price_range(market, "AAPL", "1w")["data"]
+    p = weekly["performance"]
+    assert market.queries == [("AAPL", "1d", "1w", False)]
+    assert weekly["interval"] == "1d" and weekly["price_basis"] == "adjusted"
+    assert weekly["requested_start"] == p["start"]["date"] == "2026-11-20"
+    assert p["end"]["date"] == "2026-11-27" and p["percent"] == pytest.approx(25)
+    assert [b["date"] for b in weekly["bars"]] == ["2026-11-20", "2026-11-23", "2026-11-27"]
+
+
+def test_weekly_preset_uses_supported_daily_provider_period_and_observed_end(monkeypatch):
+    requests = []
+
+    class Ticker:
+        history_metadata = {"currency": "USD", "exchangeName": "NMS", "instrumentType": "EQUITY"}
+
+        def history(self, **kwargs):
+            requests.append(kwargs)
+            return pd.DataFrame(
+                [
+                    {"Open": v, "High": v + 1, "Low": v - 1, "Close": v, "Adj Close": v}
+                    for v in (79, 80, 90, 100)
+                ],
+                index=pd.DatetimeIndex(
+                    ["2001-11-15", "2001-11-16", "2001-11-19", "2001-11-23"], tz=NY
+                ),
+            )
+
+    monkeypatch.setattr(desk.yf, "Ticker", lambda _: Ticker())
+    series = desk.chart_data("AAPL", "1d", "1w")
+    assert requests[0]["period"] == "1mo" and requests[0]["interval"] == "1d"
+    assert [b["date"] for b in series["bars"]] == ["2001-11-16", "2001-11-19", "2001-11-23"]
+    assert series["span"] == "1w" and series["as_of"] == "2001-11-23"

@@ -128,7 +128,7 @@ export function MacSetupGuide({ close }: { close: () => void }) {
             </p>
             <p>
               In <strong>Settings → AI provider</strong>, choose{' '}
-              <strong>Free on this Mac (Ollama)</strong>. Use <strong>Refresh models</strong>,
+              <strong>Free on this Mac</strong>. For website search, sign in to Ollama, create an API key, paste it under <strong>Ollama web search</strong> and choose <strong>Test web search</strong>. Use <strong>Refresh models</strong>,
               select the downloaded model and click <strong>Connect &amp; test</strong>. Wait for{' '}
               <strong>Verified for generation</strong>.
             </p>

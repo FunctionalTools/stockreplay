@@ -392,3 +392,28 @@
 .fc-model-caption .source-link {
   margin-left: 0.7rem;
 }
+.forecast-plot .forecast-marker {
+  min-width: 27px;
+  width: auto;
+  max-width: 47px;
+  height: 20px;
+  padding: 0 3px;
+  border-radius: 5px;
+  font: 600 0.68rem var(--mono);
+  white-space: nowrap;
+}
+.forecast-marker sup {
+  font-size: 0.6rem;
+  vertical-align: super;
+}
+@media (max-width: 500px) {
+  .forecast-plot .forecast-marker {
+    max-width: 36px;
+    min-width: 24px;
+    padding-inline: 2px;
+    font-size: 0.62rem;
+  }
+  .forecast-marker sup {
+    font-size: 0.54rem;
+  }
+}

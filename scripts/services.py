@@ -118,7 +118,8 @@ def start():
             raise SystemExit("No free local port in the requested range. Set STOCKREPLAY_PORT.")
     print("StockReplay is ready at " + url, flush=True)
     if os.environ.get("STOCKREPLAY_NO_BROWSER") != "1":
-        webbrowser.open(url)
+        # Bypass a previously cached launch page when reopening an updated checkout.
+        webbrowser.open(f"{url}/?build={BUILD}" if BUILD else url)
 
 
 def stop():

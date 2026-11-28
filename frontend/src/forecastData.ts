@@ -19,7 +19,7 @@ export type Forecast = {
   fetched: string | null
   as_of: string
   history: { date: string; price: number }[]
-  points: { date: string; low: number; median: number; high: number }[]
+  points: { date: string; low: number; median: number; high: number; baseline?: number }[]
   coverage: { start: string; end: string; observations: number; returns: number }
   model_version?: string
   validation_1d?: {

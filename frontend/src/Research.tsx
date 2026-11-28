@@ -383,6 +383,7 @@ export function Research({
   advanced,
   onAdvanced,
   intent,
+  query,
   updateSeq,
 }: {
   symbol: string
@@ -391,6 +392,7 @@ export function Research({
   advanced: boolean
   onAdvanced: () => Promise<void>
   intent: Intent
+  query: string
   updateSeq: number
 }) {
   const eb = useResource<Brief>('/desk/brief/' + encodeURIComponent(symbol)),
@@ -509,7 +511,14 @@ export function Research({
       </div>
       {message && <p role="status">{message}</p>}
       <div className="research-top">
-        <ResearchRange symbol={symbol} intent={intent} revision={revision} />
+        <ResearchRange
+          symbol={symbol}
+          intent={intent}
+          revision={revision}
+          query={query}
+          connection={connection}
+          settings={settings}
+        />
         <section id="scores" ref={focus} className="panel scores">
           <div className="section-head">
             <h2>
@@ -534,13 +543,25 @@ export function Research({
               shape two independent scores.
             </p>
           )}
+          {connection?.provider === 'ollama_cloud' && connection.generation_detail && (
+            <p role="status">{connection.generation_detail} <a href="#/settings">AI settings</a></p>
+          )}
           {busy && connection?.provider === 'ollama' && (
-            <p role="status">Ollama reads the evidence in batches. A full assessment can take several minutes on a Mac CPU.</p>
+            <p role="status">
+              Ollama reads the evidence in batches. A full assessment can take several minutes on a
+              Mac CPU.
+            </p>
           )}
           {connection?.configured ? (
             <button className="btn primary" disabled={busy} onClick={generate}>
               {busy ? (
-                <Busy text={connection.provider === 'ollama' ? 'Assessing sources on your Mac…' : 'Generating assessment'} />
+                <Busy
+                  text={
+                    connection.provider === 'ollama'
+                      ? 'Assessing sources on your Mac…'
+                      : 'Generating assessment'
+                  }
+                />
               ) : (
                 <>
                   <Sparkles size={14} />
@@ -550,7 +571,11 @@ export function Research({
             </button>
           ) : (
             <button className="btn primary" onClick={settings}>
-              {connection?.provider === 'openai' ? 'Connect OpenAI' : 'Set up free local AI'}{' '}
+              {connection?.provider === 'ollama_cloud'
+                ? 'Connect Ollama website key'
+                : connection?.provider === 'openai'
+                  ? 'Connect OpenAI'
+                  : 'Set up free local AI'}{' '}
               <ChevronRight size={15} />
             </button>
           )}

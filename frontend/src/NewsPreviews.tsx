@@ -57,7 +57,11 @@ function ArticleCard({ item, cited }: { item: Article; cited: boolean }) {
     title: item.text,
     url: item.url,
     source: item.source,
-    ...(item.date_kind === 'indexed' ? { indexed_at: item.date } : { published: item.date }),
+    ...(item.date_kind === 'indexed'
+      ? { indexed_at: item.date }
+      : item.date_kind === 'retrieved'
+        ? { checked_at: item.date }
+        : { published: item.date }),
     excerpt: item.excerpt,
   }
   return (

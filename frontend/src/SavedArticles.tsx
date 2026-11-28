@@ -19,6 +19,7 @@ export type ArticleReference = {
   source: string
   published?: string | null
   indexed_at?: string | null
+  checked_at?: string | null
   excerpt?: string | null
 }
 type SavedArticle = ArticleReference & { id: string; saved_at: string }
@@ -209,7 +210,9 @@ function ReadingListDialog({ close }: { close: () => void }) {
                   {a.source} ·{' '}
                   {a.published
                     ? 'Published ' + shortDay(a.published)
-                    : 'Indexed ' + shortDay(a.indexed_at)}
+                    : a.indexed_at
+                      ? 'Indexed ' + shortDay(a.indexed_at)
+                      : 'Checked ' + shortDay(a.checked_at)}
                 </small>
                 <a href={a.url} target="_blank" rel="noopener noreferrer">
                   {a.title}

@@ -10,7 +10,7 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import ConfigDict, Field, JsonValue, model_validator
 
-from .assistant import Message, reject_key
+from .assistant import Message
 from .schema import Model
 
 Title = Annotated[str, Field(min_length=1, max_length=120)]
@@ -42,8 +42,8 @@ class Transcript(Model):
             raise ValueError("Each message must have its own ID.")
         return self
 
-    def pack(self):
-        return packed(**self.model_dump(include={"entries", "context"}, mode="json"))
+    def pack(self, check):
+        return packed(check=check, **self.model_dump(include={"entries", "context"}, mode="json"))
 
 
 class NewChat(Transcript):
@@ -58,7 +58,7 @@ class SaveChat(Transcript):
     revision: Revision
 
 
-def packed(entries, context):
+def packed(entries, context, check):
     data = json.dumps(
         {"entries": entries, "context": context},
         sort_keys=True,
@@ -66,7 +66,7 @@ def packed(entries, context):
         ensure_ascii=False,
         allow_nan=False,
     )
-    reject_key(data)
+    check(data)
     return zlib.compress(data.encode(), level=3)
 
 
@@ -98,7 +98,7 @@ def private_response(response: Response):
     response.headers["Cache-Control"] = "no-store"
 
 
-def register_chat_history(parent, db):
+def register_chat_history(parent, db, check):
     with db.connect() as conn:
         conn.execute(
             """create table if not exists assistant_chats (
@@ -123,10 +123,10 @@ def register_chat_history(parent, db):
 
     @r.post("", status_code=201)
     def create(request: NewChat):
-        reject_key(request.title)
+        check(request.title)
         key = str(request.id or uuid4())
         ts = stamp()
-        blob = request.pack()
+        blob = request.pack(check)
         copy = bool(request.entries or request.context)
         fingerprint = (
             hashlib.sha256(request.title.encode() + b"\0" + blob).digest() if copy else None
@@ -156,7 +156,7 @@ def register_chat_history(parent, db):
 
     def update(key, revision, title, transcript=None):
         if title is not None:
-            reject_key(title)
+            check(title)
         with db.connect() as conn:
             conn.execute("begin immediate")
             row = required(conn, key)
@@ -174,7 +174,7 @@ def register_chat_history(parent, db):
 
     @r.put("/{key}")
     def save(key: UUID, request: SaveChat):
-        return update(key, request.revision, request.title, request.pack())
+        return update(key, request.revision, request.title, request.pack(check))
 
     @r.patch("/{key}")
     def rename(key: UUID, request: RenameChat):

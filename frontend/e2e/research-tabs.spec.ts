@@ -22,17 +22,21 @@ test('assistant creates and updates a saved tab with scores and a working range 
     score.getByRole('link', { name: /assessment|factors and sources/i }),
   ).toHaveAttribute('href', '#/research/AAPL/scores')
   const widget = page.locator('.tab-widget-chart')
-  await expect(widget.locator('.tab-chart-returns a')).toHaveAttribute(
+  await expect(widget.getByRole('link', { name: /^AAPL\s*[+−-]?\d/ })).toHaveAttribute(
     'href',
     '#/research/AAPL/range_1mo',
   )
+  await expect(widget.getByRole('link', { name: 'Open AAPL Future chart' })).toHaveAttribute(
+    'href',
+    '#/research/AAPL?view=future&range=1mo',
+  )
   await send('Change block 2 to a five-day Apple chart on this tab.')
-  await expect(widget.locator('.tab-chart-returns a')).toHaveAttribute(
+  await expect(widget.getByRole('link', { name: /^AAPL\s*[+−-]?\d/ })).toHaveAttribute(
     'href',
     '#/research/AAPL/range_5d',
   )
   await page.reload()
-  const link = widget.locator('.tab-chart-returns a')
+  const link = widget.getByRole('link', { name: /^AAPL\s*[+−-]?\d/ })
   await expect(link).toHaveText(/AAPL\s*[+−-]?\d+[.,]\d+%/)
   await link.click()
   await expect(page).toHaveURL(/research\/AAPL\/range_5d$/)

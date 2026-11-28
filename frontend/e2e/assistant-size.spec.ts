@@ -15,7 +15,7 @@ async function textLeaks(panel: Locator) {
       const boxes = [...range.getClientRects()].filter((b) => b.height && b.width)
       // Some WebKit versions expose SVG text geometry on the text element only.
       if (!boxes.length && el instanceof SVGTextElement) boxes.push(el.getBoundingClientRect())
-      const container = el.closest('.bubble') ?? root
+      const container = el.closest('[data-speaker]') ?? root
       const limits = [
         container,
         root,

@@ -2,10 +2,11 @@ import { useEffect, useRef, useState } from 'react'
 import { Bookmark, BriefcaseBusiness, ChartNoAxesCombined, Settings as Gear } from 'lucide-react'
 import { Research } from './Research'
 import { ForecastCalendar } from './ForecastCalendar'
+import { fromFutureFocus, futureHref } from './forecastSnapshot'
 import { calendarHref, calendarSelection, type CalendarSelection } from './forecastData'
 import { SearchStock } from './SearchStock'
 import { ResearchHome, type HomeContext } from './ResearchHome'
-import { validRangeFocus } from './ResearchRange'
+import { validRangeFocus } from './priceRanges'
 import { useResource } from './deskCommon'
 import { Watchlists } from './Watch'
 import { HoldingsPage } from './Positions'
@@ -32,7 +33,7 @@ const nav = [
   { name: 'Portfolio' as const, icon: BriefcaseBusiness },
 ]
 const deepLinks: Record<Page, string[]> = {
-  Research: ['news', 'ratings', 'scores', 'tools', 'saved-articles'],
+  Research: ['future', 'news', 'ratings', 'scores', 'tools', 'saved-articles'],
   Portfolio: ['import-guide', 'holdings', 'prices', 'account'],
   Watchlists: ['watchlist'],
   Settings: [],
@@ -59,7 +60,12 @@ function readRoute() {
     query,
     symbol: tickerPattern.test(ticker) ? ticker : '',
     tabId,
-    focus: !tabId && allowsFocus(page, parts[2] || '') ? parts[2] : '',
+    focus:
+      page === 'Research' && !tabId && new URLSearchParams(query).get('view') === 'future'
+        ? 'future'
+        : !tabId && allowsFocus(page, parts[2] || '')
+          ? parts[2]
+          : '',
   }
 }
 export default function App() {
@@ -162,6 +168,14 @@ export default function App() {
     return next
   }
   function go(p: Page, s?: string, focus = '') {
+    const future = p === 'Research' ? fromFutureFocus(focus) : null
+    if (future) {
+      const hash = futureHref((s || symbol).toUpperCase(), future.preset, future.start, future.end)
+      if (location.hash !== hash) history.pushState(null, '', hash)
+      setRoute(readRoute())
+      setIntent((v) => ({ kind: 'future', seq: v.seq + 1 }))
+      return
+    }
     const next = {
       page: p,
       query: '',
@@ -306,6 +320,7 @@ export default function App() {
                   onAdvanced={() => save({ advanced: true })}
                   updateSeq={seq}
                   intent={intent}
+                  query={route.query}
                 />
               </>
             )}

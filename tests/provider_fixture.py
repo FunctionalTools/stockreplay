@@ -67,6 +67,14 @@ def respond(request):
     inputs = json.loads(body["input"])
     if name == "connection_check":
         return completed({"result": "ready"})
+    if name == "future_price_scenario":
+        fields=body["text"]["format"]["schema"]["properties"]
+        sid=fields["near"]["properties"]["source"]["enum"][0]
+        level={"tilt":"slightly_higher","source":sid}
+        result={"near":level,"middle":level,"longer":level,"drivers":[fields["drivers"]["items"]["enum"][0]]}
+        if "watch" in fields:result["watch"]=fields["watch"]["enum"][0]
+        if "quarters" in fields:result["quarters"]={k:v["enum"][0] for k,v in fields["quarters"]["properties"].items()}
+        return completed(result)
     if name == "stock_scores":
         return completed(assessment(inputs))
     if name == "stock_question":
@@ -146,6 +154,8 @@ def respond(request):
 def install_market():
     from tests.fixture_events import install as install_calendar
     install_calendar()
+    from stockreplay import forecast_evidence
+    forecast_evidence.quarterly_consensus = lambda symbol: []
     from stockreplay import desk
     desk.PublicResearch.lookup = lambda self, symbol, profile, question="", refresh=False, public_topic=False: {
         "symbol":symbol,"query":symbol,"checked":datetime.now(timezone.utc).isoformat(),"evidence":[],"coverage":[]

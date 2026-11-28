@@ -9,21 +9,24 @@ from datetime import date as Date
 from typing import Literal
 from uuid import uuid4
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import Field, field_validator
 
 from . import assistant
 from .local_ai import LocalModel, ProviderChoice, Providers
 from .chat_history import register_chat_history
 from .market import read_csv
+from .ollama_web import search_access
 from .desk import Desk, INTERVALS, SCREENS, parallel, safe_url, screen
 from .holdings import AccountInput, Holdings, Position, Statement
 from .home import portfolio_context
+from .ollama_cloud import CloudKeySettings, SearchKeySettings
 from .openai_research import KeySettings, ModelLookup, OpenAIResearch
 from .custom_tabs import register_tabs
 from .schema import Model
 from .store import now
 from .market_events import register_events
+from .ai_forecasts import register_forecasts
 from .symbols import ticker
 from .price_ranges import price_range, validate_range
 from .projections import project_symbols
@@ -117,6 +120,7 @@ class Terminal:
             legacy = bool(legacy_table and c.execute("select 1 from openai_settings where remember=1").fetchone())
         self.openai = OpenAIResearch(db)
         self.ai = Providers(db,self.openai,legacy)
+        self.desk.web.search_access = lambda: search_access(self.ai)
         self.check_lock = threading.Lock()
         with db.connect() as c:
             c.executescript("""
@@ -234,11 +238,13 @@ def register(app, db):
         finally:
             stopping.set()
             t.openai.close()
+            t.ai.ollama_cloud.close()
 
     r = APIRouter(prefix="/api", lifespan=lifespan)
 
-    register_chat_history(r, db)
+    register_chat_history(r, db, t.ai.reject_credentials)
     register_events(r, t.desk, ticker)
+    register_forecasts(r,t)
 
     defaults = {
         "appearance": "system",
@@ -302,6 +308,42 @@ def register(app, db):
     def configure_local(item: LocalModel):
         return t.ai.configure_ollama(item.model)
 
+    @r.get("/ai/ollama-cloud")
+    def cloud_status():
+        return t.ai.ollama_cloud.status()
+
+    @r.put("/ai/ollama-cloud")
+    def configure_cloud(item: CloudKeySettings):
+        return t.ai.configure_hosted(t.ai.ollama_cloud,item)
+
+    @r.post("/ai/ollama-cloud/test")
+    def verify_cloud():
+        return t.ai.ollama_cloud.test()
+
+    @r.delete("/ai/ollama-cloud")
+    def forget_cloud():
+        return t.ai.ollama_cloud.forget()
+
+    @r.get("/ai/ollama-cloud/models")
+    def hosted_ollama_models():
+        return t.ai.ollama_cloud.models()
+
+    @r.post("/ai/ollama-cloud/models")
+    def discover_hosted_ollama_models(item: ModelLookup):
+        return t.ai.ollama_cloud.models(candidate=item.key)
+
+    @r.get("/ai/ollama-search")
+    def search_key_status():
+        return t.ai.ollama_search.status()
+
+    @r.put("/ai/ollama-search")
+    def enable_web_search(item: SearchKeySettings):
+        return t.ai.ollama_search.configure(item)
+
+    @r.delete("/ai/ollama-search")
+    def forget_search_key():
+        return t.ai.ollama_search.forget()
+
     @r.get("/openai/models")
     def models(discover: bool = False):
         return t.openai.models(discover)
@@ -310,14 +352,20 @@ def register(app, db):
     def lookup_models(item: ModelLookup):
         return t.openai.models(candidate=item.key)
 
+    @r.post("/assistant/check-message")
+    def check_chat_message(item: assistant.Message):
+        t.ai.reject_credentials(item.text)
+        return {"ok": True}
+
     @r.post("/assistant")
     def assistant_plan(chat: assistant.Chat):
         chat.symbol = ticker(chat.symbol)
+        t.ai.reject_credentials("\n".join([chat.symbol, *(message.text for message in chat.messages)]))
         return assistant.plan(t.ai.active(), chat)
 
     @r.post("/assistant/research/{symbol}")
     def answer_question(symbol: str, item: assistant.Question):
-        assistant.reject_key(item.question)
+        t.ai.reject_credentials(item.question)
         gateway = t.ai.active()
         symbol = ticker(symbol)
         if assistant.asks_for_sources(item.question):
@@ -329,7 +377,18 @@ def register(app, db):
             return assistant.research_question(
                 gateway, t.desk.briefing(symbol), item.question, credentials
             )
-        return assistant.research_question(gateway, brief, item.question)
+        try:
+            return assistant.research_question(gateway, brief, item.question)
+        except HTTPException as exc:
+            if getattr(gateway, "provider", "") != "ollama_cloud" or exc.status_code not in (403, 429, 503):
+                raise
+            reply = assistant.source_reply(brief, item.question)
+            reason = {
+                403: "Ollama denied access to generation.",
+                429: "Ollama generation limit reached.",
+                503: "Ollama generation is busy.",
+            }[exc.status_code]
+            return {**reply, "text": reason + " " + reply["text"]}
 
     @r.get("/prices/imports")
     def imports():
@@ -471,7 +530,7 @@ def register(app, db):
 
     @r.post("/desk/web-research/{symbol}")
     def search_public_sources(symbol: str, item: assistant.Question):
-        assistant.reject_key(item.question)
+        t.ai.reject_credentials(item.question)
         return t.desk.web_research(ticker(symbol), item.question, public_topic=True)
 
     @r.get("/desk/brief/{symbol}")
@@ -513,7 +572,7 @@ def register(app, db):
 
     @r.put("/openai")
     def key_set(settings: KeySettings):
-        return t.ai.configure_openai(settings)
+        return t.ai.configure_hosted(t.openai,settings)
 
     @r.delete("/openai")
     def key_forget():

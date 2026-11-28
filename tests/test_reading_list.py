@@ -121,5 +121,18 @@ def test_indexed_only_dates_and_preexisting_published_bookmarks(tmp_path, articl
             "/api/reading-list", json={**metadata, "indexed_at": "2026-11-22"}
         ).json()
         assert indexed["published"] is None and indexed["indexed_at"] == "2026-11-22"
+        checked = client.put(
+            "/api/reading-list",
+            json={
+                **metadata,
+                "url": "https://example.com/search-result",
+                "checked_at": "2026-11-22",
+            },
+        ).json()
+        assert (
+            checked["published"] is None
+            and checked["indexed_at"] is None
+            and checked["checked_at"] == "2026-11-22"
+        )
     with TestClient(create_app(tmp_path)) as client:
         assert indexed in client.get("/api/reading-list").json()

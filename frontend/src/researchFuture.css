@@ -1,0 +1,271 @@
+.chart-mode-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  margin: 0 0 12px;
+}
+.chart-modes {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 8px;
+  background: var(--soft);
+}
+.chart-modes button {
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  min-width: 62px;
+  padding: 4px 10px;
+  font-size: 0.82rem;
+  font-weight: 650;
+}
+.chart-modes button[aria-pressed='true'] {
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 1px 4px #182f251c;
+}
+.future-generate,
+.future-citations {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px 12px;
+}
+.future-generate {
+  margin: 8px 0;
+}
+.future-generate .btn {
+  min-height: 32px;
+  padding: 6px 10px;
+}
+.future-status,
+.future-empty,
+.future-saved,
+.future-quarter-detail small {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+.future-saved {
+  display: block;
+  margin: 6px 0 8px;
+}
+.fc-inline .forecast-chart-heading > div:first-child {
+  display: none;
+}
+.fc-inline .forecast-plot {
+  margin-top: 5px;
+}
+.fc-inline .forecast-key {
+  gap: 5px 10px;
+}
+.fc-inline .forecast-key .fc-baseline-key i {
+  border: 0;
+  border-top: 2px dotted var(--muted);
+  background: transparent;
+}
+.fc-inline .forecast-values {
+  min-width: 0;
+}
+.fc-inline .forecast-values :is(td, th) {
+  white-space: normal;
+}
+.fc-inline .forecast-playback {
+  margin: 4px 0;
+  padding-block: 4px;
+}
+.fc-inline .fc-popup {
+  bottom: 14%;
+  max-height: 185px;
+}
+.future-outlook {
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+  margin-top: 12px;
+}
+.future-outlook p,
+.future-quarter-detail dd,
+.future-details li {
+  font-size: 0.83rem;
+}
+.future-outlook h3,
+.future-outlook h4 {
+  font-size: 0.9rem;
+  margin: 8px 0 5px;
+}
+.future-outlook p,
+.future-details ul {
+  margin: 4px 0;
+}
+.future-citations {
+  font-size: 0.76rem;
+  overflow-wrap: anywhere;
+}
+.future-fiscal {
+  margin-top: 10px;
+}
+.future-fiscal .range {
+  display: inline-flex;
+  gap: 3px;
+}
+.future-quarter-detail {
+  padding: 8px 0;
+}
+.future-quarter-detail > small {
+  display: block;
+}
+.future-quarter-detail dl {
+  margin: 4px 0;
+}
+.future-quarter-detail dl > div {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 0.78rem;
+}
+.future-quarter-detail dd {
+  margin: 0;
+}
+.future-details,
+.future-events {
+  font-size: 0.8rem;
+  margin-top: 8px;
+}
+.future-details summary,
+.future-events summary {
+  cursor: pointer;
+  color: var(--accent);
+}
+.future-events label {
+  display: grid;
+  gap: 3px;
+}
+.future-events select {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+.future-events .forecast-event-card {
+  margin-top: 5px;
+}
+.tab-chart-period-links {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+.fc-inline.fc-compare .forecast-chart-heading > div:first-child {
+  display: block;
+}
+.fc-compare h2 {
+  font-size: 1rem;
+  margin: 4px 0 0;
+}
+.future-comparison form,
+.future-links,
+.future-comparison li {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+.future-links {
+  justify-content: space-between;
+}
+.future-links button,
+.future-links a {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.8rem;
+}
+.future-comparison form {
+  margin: 6px 0;
+}
+.future-comparison input {
+  min-width: 100px;
+  width: 160px;
+  max-width: 100%;
+}
+.future-comparison ul {
+  list-style: none;
+  padding: 0;
+  margin: 6px 0;
+}
+.future-comparison li {
+  border-top: 1px solid var(--line);
+  padding: 5px 0;
+}
+.future-comparison li > div:first-child {
+  display: grid;
+  margin-right: auto;
+}
+.future-comparison li .icon-btn {
+  width: 28px;
+  height: 28px;
+}
+.future-comparison li .error-box {
+  flex-basis: 100%;
+}
+.future-chart-key {
+  display: flex;
+  gap: 0.7rem;
+  flex-wrap: wrap;
+}
+.future-chart-key span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font: 0.77rem var(--mono);
+}
+.future-chart-key i {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+.future-toolbar {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 15px;
+}
+.future-comparison:has(> div:not([hidden]) form) {
+  flex-basis: 100%;
+}
+.future-links {
+  gap: 10px;
+}
+.future-fiscal > strong {
+  font-size: 0.82rem;
+  margin-right: 8px;
+}
+.future-inspected {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  margin: 3px 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+}
+.future-inspected strong {
+  color: var(--text);
+}
+.fc-inline .forecast-key .fc-event-key i {
+  width: 9px;
+  height: 9px;
+  border: 1px solid var(--accent);
+  border-radius: 50%;
+  background: var(--panel);
+}
+.future-events > summary {
+  font-weight: 600;
+}
+.future-events > label {
+  margin-top: 4px;
+}
+.research-top > .scores {
+  align-self: start;
+}

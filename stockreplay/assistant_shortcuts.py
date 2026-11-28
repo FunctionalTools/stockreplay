@@ -6,7 +6,8 @@ from .symbols import NAMES
 
 PERIODS = {
     "1d": ("1d", "1 day", "one day", "today", "daily"),
-    "5d": ("5d", "5 days", "five days", "1 week", "one week"),
+    "5d": ("5d", "5 days", "five days", "five trading days"),
+    "1w": ("1w", "1wk", "1 week", "one week"),
     "1mo": ("1mo", "1m", "1 month", "one month"),
     "3mo": ("3mo", "3m", "3 months", "three months"),
     "6mo": ("6mo", "6m", "6 months", "six months"),
@@ -102,10 +103,58 @@ def preference(text, current):
     return None
 
 
+def asks_for_future_view(raw):
+    text = " ".join(raw.lower().replace("’", "'").strip().rstrip("?! .").split())
+    return bool(re.fullmatch(
+        r"(?:where(?:'s|s| is| can i (?:find|see|view)| do i (?:find|see|view))|"
+        r"(?:which|what) (?:tab|page|view) (?:shows|has|contains)) (?:the )?"
+        r"(?:(?:tab|page|view) (?:where i can (?:see|view)|for|with|that shows) )?"
+        r"(?:future(?: (?:tab|view))?|(?:future )?(?:stock price |stock |price )?"
+        r"(?:predictions?|projections?|forecasts?))(?: (?:tab|page|view))?",
+        text,
+    ))
+
+
+def forecast_command(text, current, question):
+    # Only a whole imperative can dispatch the billable generation endpoint.
+    command = r"(?P<verb>generate|regenerate|update|refresh|open|view|show|display) (?:me )?(?:a |the |my )?(?:saved )?"
+    noun = r"(?:(?:stock |AI )?(?:price )?forecast|(?:stock )?price prediction)"
+    match = re.fullmatch(
+        command + noun + rf" for (?P<asset>.+?) (?:for |over |from )(?P<span>{RANGE})", text, re.I
+    ) or re.fullmatch(
+        command + rf"(?:(?P<span>{RANGE}) )?" + noun + r"(?: for (?P<asset>.+))?", text, re.I
+    )
+    if not match:
+        return None
+    asset = symbol(match["asset"], current) if match["asset"] else current
+    if not asset:
+        return None
+    span = period(match["span"] or "6mo")
+    if match["verb"].lower() in {"open", "view", "show", "display"}:
+        focus = "future_custom_" + span.replace("/", "_") if "/" in span else "future_" + span
+        return {"kind": "navigate", "symbol": asset, "page": "Research", "focus": focus}
+    return None if question else {"kind": "forecast", "symbol": asset, "span": span}
+
+
+def forecast_question_symbol(raw, current):
+    # Product and price-forecast questions can open the saved chart without running inference.
+    text = raw.strip().rstrip("?.!")
+    if not re.match(r"(?:please )?(?:where|what|how|when|why|which|can|could|would|should|is|are|do|does|generate|regenerate|update|refresh)\b", text, re.I):
+        return None
+    if not re.search(r"\b(?:forecasts?|(?:stock |price )(?:predictions?|projections?))\b", text, re.I):
+        return None
+    if re.search(r"\b(?:earnings|revenue|sales|cash flow|EPS|filings?|research online|news|weather)\b", text, re.I):
+        return None
+    mentioned = re.search(r"\bfor (.+)$", text, re.I)
+    return (symbol(mentioned[1], current) if mentioned else None) or current
+
+
 def local_actions(raw, current, provider=None):
     text = re.sub(r"^please\s+", "", " ".join(raw.split()), flags=re.I).rstrip(".!?").strip()
     if not text:
         return None
+    if requested := forecast_command(text, current, raw.strip().endswith("?")):
+        return [requested]
     if (
         re.match(
             r"^(?:search (?:the )?(?:web|internet|online)|research online|read (?:the )?(?:latest )?SEC filings?)\b",
@@ -133,6 +182,13 @@ def local_actions(raw, current, provider=None):
             r"\b(?:this stock|this ticker|current stock|its filings)\b", text, re.I
         ):
             return [{"kind": "research", "symbol": current, "question": text}]
+    if m := re.fullmatch(
+        r"(?:open|show|view|go to) (?:the )?(?:future(?: view| tab)?|(?:stock |price )?(?:projections|predictions))(?: for (.+))?",
+        text, re.I,
+    ):
+        asset = symbol(m[1], current) if m[1] else current
+        if asset:
+            return [{"kind": "navigate", "page": "Research", "focus": "future", "symbol": asset}]
     if m := re.fullmatch(
         r"(?:open|show|view|go to) (?:the |my )?(?:forecast |stock )?calendar(?: for (.+))?",
         text,

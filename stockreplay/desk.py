@@ -14,6 +14,7 @@ from bs4 import BeautifulSoup
 import pandas as pd
 import yfinance as yf
 
+from .price_ranges import week_start
 from .public_cache import PublicCache
 from .news_images import NewsImages, image_url
 from .web_research import PublicResearch
@@ -24,7 +25,7 @@ INTERVALS = {
     "5m": ["5d", "1mo"],
     "15m": ["5d", "1mo"],
     "1h": ["1mo", "3mo", "1y"],
-    "1d": ["1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "max"],
+    "1d": ["5d", "1w", "1mo", "3mo", "6mo", "ytd", "1y", "2y", "5y", "10y", "max"],
     "1wk": ["1y", "5y", "10y"],
     "1mo": ["5y", "10y", "max"],
 }
@@ -96,7 +97,7 @@ def chart_data(symbol, interval, span, start=None, end=None):
     window = (
         {"start": start.isoformat(), "end": (end + timedelta(days=1)).isoformat()}
         if span == "custom"
-        else {"period": span}
+        else {"period": "1mo" if span == "1w" else span}
     )
     frame = instrument.history(
         interval=interval,
@@ -165,6 +166,10 @@ def chart_data(symbol, interval, span, start=None, end=None):
         )
     if not bars:
         raise ValueError("No completed bars for this selection.")
+    if span == "1w":
+        # Yahoo has no one-week period. Slice real daily closes through the last observed session.
+        boundary = week_start(bars[-1]["date"])
+        bars = [bar for bar in bars if bar["date"] >= boundary]
     return {
         "exchange": metadata.get("exchangeName"),
         "instrument_type": metadata.get("instrumentType"),

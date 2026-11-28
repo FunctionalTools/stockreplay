@@ -10,8 +10,10 @@ from threading import Lock
 from urllib.parse import quote, urlencode, urljoin, urlsplit, urlunsplit
 
 from bs4 import BeautifulSoup
+from fastapi import HTTPException
 
 from .sec_research import sec_lookup
+from .ollama_web import PROVIDER as OLLAMA_SEARCH, SearchAccess, hosted_sources
 from .source_reader import (
     article_document,
     article_publisher,
@@ -192,6 +194,7 @@ def mentions(text, symbol, name):
 class PublicResearch:
     def __init__(self, cache):
         self.cache = cache
+        self.search_access = lambda: None
         self.recent = {}
         self.lock = Lock()
         self.locks = [Lock() for _ in range(19)]
@@ -199,21 +202,32 @@ class PublicResearch:
     def lookup(self, symbol, profile, question="", refresh=False, public_topic=False):
         terms = topics(question, explicit_topic=public_topic)
         name = public_name(symbol, profile)
-        cache_key = (symbol, name, terms)
+        access = self.search_access()
+        if access and question:
+            try:
+                if access.contains_secret(question):
+                    raise ValueError("Remove the API key from the public research question.")
+            except HTTPException:
+                # A locked Keychain must still allow the independent sources to check public topics.
+                access = SearchAccess(access.mode, "locked", None)
+                terms = tuple(t for t in terms if t in TOPICS)
+        cache_key = (symbol, name, terms, (access.mode, access.revision) if access else None)
         with self.locks[hash(cache_key) % len(self.locks)]:
             stamp = datetime.now(timezone.utc)
             with self.lock:
                 old = self.recent.get(cache_key)
             if old and not refresh and stamp - old[0] < timedelta(minutes=5):
                 return old[1]
-            result = self._search(symbol, name, profile.get("quoteType") == "ETF", terms, refresh)
+            result = self._search(
+                symbol, name, profile.get("quoteType") == "ETF", terms, refresh, access
+            )
             with self.lock:
                 if len(self.recent) >= 128:
                     del self.recent[next(iter(self.recent))]
                 self.recent[cache_key] = (stamp, result)
             return result
 
-    def _search(self, symbol, name, is_etf, terms, refresh):
+    def _search(self, symbol, name, is_etf, terms, refresh, access=None):
         key = hashlib.sha256(json.dumps([name, terms]).encode()).hexdigest()[:24]
         tasks = {
             "GDELT news search": partial(
@@ -228,9 +242,13 @@ class PublicResearch:
             ),
             "SEC EDGAR": partial(sec_lookup, symbol, terms, self.cache, refresh),
         }
+        if access:
+            tasks[OLLAMA_SEARCH] = partial(
+                hosted_sources, self.cache, access, symbol, name, terms, mentions, refresh
+            )
         evidence, coverage, candidates = [], [], {}
         checked = now()
-        with ThreadPoolExecutor(max_workers=3) as pool:
+        with ThreadPoolExecutor(max_workers=len(tasks)) as pool:
             futures = {p: pool.submit(fn) for p, fn in tasks.items()}
             for provider, future in futures.items():
                 status = {
@@ -243,6 +261,11 @@ class PublicResearch:
                 coverage.append(status)
                 try:
                     packet = future.result()
+                    if provider == OLLAMA_SEARCH:
+                        records, availability = packet
+                        evidence.extend(records)
+                        status.update(availability)
+                        continue
                     if provider == "SEC EDGAR":
                         records, notes = packet
                         evidence.extend(records)

@@ -265,6 +265,9 @@ export function useChatHistory() {
   }
   async function startTurn(text: string): Promise<Context> {
     if (!initialized.current) throw Error('Open chat history again to load your conversations.')
+    // Opaque saved keys can belong to another provider. Check them locally before journaling.
+    if (/[!-~]{15}/.test(text))
+      await api('/assistant/check-message', 'POST', { role: 'user', text })
     if (!current.current) {
       const stamp = new Date().toISOString()
       // Revision -1 is a local draft whose first turn has not been acknowledged by SQLite.

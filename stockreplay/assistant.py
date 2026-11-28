@@ -4,7 +4,7 @@ import re
 from typing import Literal
 from fastapi import HTTPException
 from pydantic import Field
-from .assistant_shortcuts import local_actions
+from .assistant_shortcuts import asks_for_future_view, forecast_question_symbol, local_actions
 from .schema import Model
 from .openai_research import choices, object_schema, array, indexed_evidence
 from .store import now
@@ -119,6 +119,7 @@ GUIDE += """ Use tab to build real saved tabs. Create with the requested name an
 DESTINATIONS = {
     "Research": ("Research", ""),
     "Forecast calendar": ("Calendar", ""),
+    "Open Future": ("Research", "future"),
     "Analyst ratings": ("Research", "ratings"),
     "News articles": ("Research", "news"),
     "Saved articles": ("Research", "saved-articles"),
@@ -137,7 +138,7 @@ Write one plain sentence, at most 18 words. Skip introductions, repeated action 
 For actions, leave reply empty when the app's result will answer the request. For a question about finding or
 using a feature, return up to two relevant destination names as links. Open it immediately only if asked.
 When custom_tab_open is true, “this tab” means the open custom tab: for append, open, rename or delete, use an empty name. When false, ask which tab if the user omits it.
-Use range for the Research page's performance chart. For chart, range and tab chart blocks supply a span of 1d, 5d, 1mo, 3mo, 6mo, ytd, 1y, 2y, 5y, 10y, max or YYYY-MM-DD/YYYY-MM-DD for custom dates. Use chart for a graph inside chat; range changes the homepage graph. A saved scores block takes one ticker and shows its latest saved assessment. To edit a tab widget use edit_block, its one-based position as value and exactly one replacement block. For home based on holdings use home_portfolio (uses the user's locally selected portfolio holding); to pin a ticker use home_stock. Use individual appearance, accent and advanced actions for a combined settings request. Use chat_size to expand or reset the assistant window. Only change the API model if explicitly requested, using model. Direct key or Keychain changes to Settings.
+For stock projections, link Open Future on the Research homepage. Link Forecast calendar for dated events. Use range for the Research page's performance chart. For chart, range and tab chart blocks supply a span of 1d, 5d, 1w, 1mo, 3mo, 6mo, ytd, 1y, 2y, 5y, 10y, max or YYYY-MM-DD/YYYY-MM-DD for custom dates. Use chart for a graph inside chat; range changes the homepage graph. A saved scores block takes one ticker and shows its latest saved assessment. To edit a tab widget use edit_block, its one-based position as value and exactly one replacement block. For home based on holdings use home_portfolio (uses the user's locally selected portfolio holding); to pin a ticker use home_stock. Use individual appearance, accent and advanced actions for a combined settings request. Use chat_size to expand or reset the assistant window. Only change the API model if explicitly requested, using model. Direct key or Keychain changes to Settings.
 When the active symbol is blank, use an empty symbol for requests concerning this stock; the app resolves it locally. For bookmarks, link Saved articles under My tabs. To save a story, point to the bookmark button on its news card.
 For help importing personal investments, link Portfolio import guide. Put destinations in links, never invent URLs.
 """
@@ -208,9 +209,23 @@ def plan(gateway, chat):
         raise ValueError("Enter a message to send.")
     for m in chat.messages:
         reject_key(m.text)
+    if asks_for_future_view(chat.messages[-1].text):
+        return {
+            "reply": "Choose Future on the Research price chart to see projected prices.",
+            "actions": [],
+            "links": [{"label": "Open Future", "page": "Research", "symbol": chat.symbol, "focus": "future"}],
+            "local": True,
+        }
     actions = local_actions(chat.messages[-1].text, chat.symbol, getattr(gateway, "provider", None))
     if actions:
         return {"reply": "", "actions": actions, "links": [], "local": True}
+    if asset := forecast_question_symbol(chat.messages[-1].text, chat.symbol):
+        return {
+            "reply": f'Open a saved forecast, or say “Generate a 1M forecast for {asset}”.',
+            "actions": [],
+            "links": [{"label": "Open Future", "page": "Research", "symbol": asset, "focus": "future"}],
+            "local": True,
+        }
     key, model = gateway.credentials()
     inputs = chat.model_dump(exclude={"portfolio_context"})
     if chat.portfolio_context:
@@ -290,7 +305,8 @@ def source_reply(report, question):
     )[:2]
     if sources and sources[0].get("excerpt"):
         first = sources[0]
-        text = f"{first['source']} · “{brief_text(first['excerpt'], 17, 110)}”"
+        label = "Search excerpt" if first.get("scope") == "Search excerpt" else first["source"]
+        text = f"{label} · “{brief_text(first['excerpt'], 17, 110)}”"
     elif sources:
         text = "The search found headlines only. Open a source to read the article."
     else:

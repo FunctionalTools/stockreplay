@@ -1,41 +1,47 @@
 import { useEffect, useState } from 'react'
 import { Check, KeyRound, Monitor, Moon, Palette, SlidersHorizontal, Sun } from 'lucide-react'
 import { api, errorText } from './types'
+import { OllamaSearchKey } from './OllamaSearchKey'
 import { LocalModelConnection } from './LocalModelConnection'
 import { useResource, SourceLink } from './deskCommon'
 import { Busy, ErrorBox, Field } from './ui'
 import { type Preferences, type Connection, type AIProvider, tickerPattern } from './workspace'
-function OpenAISettings({
+function HostedAISettings({
+  provider,
   connection,
   changed,
   busy,
   wait,
 }: {
+  provider: 'ollama_cloud' | 'openai'
   connection: Connection | null
   changed: (value: Connection) => void
   busy: boolean
   wait: (busy: boolean) => void
 }) {
+  const ollama = provider === 'ollama_cloud'
+  const endpoint = ollama ? '/ai/ollama-cloud' : '/openai'
+  const defaultModel = ollama ? 'gpt-oss:20b' : 'gpt-4.1-mini'
   const [key, setKey] = useState(''),
-    [model, setModel] = useState(connection?.model || 'gpt-4.1-mini'),
+    [model, setModel] = useState(connection?.model || defaultModel),
     [remember, setRemember] = useState(connection?.storage === 'macOS Keychain'),
     [error, fail] = useState(''),
     [note, setNote] = useState(''),
     [candidateModels, setCandidateModels] = useState<{ id: string; label: string }[] | null>(null),
     [discovering, discover] = useState(false)
   const models = useResource<{ models: { id: string; label: string }[] }>(
-    '/openai/models' + (connection?.verified ? '?discover=true' : ''),
+    endpoint + '/models' + (!ollama && connection?.verified ? '?discover=true' : ''),
   )
   useEffect(() => {
-    setModel(connection?.model || 'gpt-4.1-mini')
+    setModel(connection?.model || defaultModel)
     setRemember(connection?.storage === 'macOS Keychain')
-  }, [connection?.model, connection?.storage])
+  }, [connection?.model, connection?.storage, defaultModel])
   async function test() {
     wait(true)
     fail('')
     setNote('')
     try {
-      const v = await api<Connection>('/openai', 'PUT', {
+      const v = await api<Connection>(endpoint, 'PUT', {
         model,
         remember,
         ...(key.trim() ? { key: key.trim() } : {}),
@@ -45,7 +51,11 @@ function OpenAISettings({
       models.reload()
       changed(v)
       setNote(
-        'Generation verified with ' + v.model + '. You can generate scores and use the assistant.',
+        ollama
+          ? ''
+          : 'Generation verified with ' +
+              v.model +
+              '. You can generate scores and use the assistant.',
       )
     } catch (e) {
       fail(errorText(e))
@@ -53,15 +63,49 @@ function OpenAISettings({
       wait(false)
     }
   }
+  const available = candidateModels || models.data?.models || []
+  const options = available.some((item) => item.id === model)
+    ? available
+    : [{ id: model, label: model }, ...available]
   const dirty =
     key.trim() ||
     model !== connection?.model ||
     remember !== (connection?.storage === 'macOS Keychain')
   return (
     <>
-      <p>
-        OpenAI runs in the cloud. Your API project pays for the connection test, scores and chat.
-      </p>
+      {ollama ? (
+        <div className="hosted-setup">
+          <h3>Connect Ollama Cloud</h3>
+          <ol>
+            <li>
+              Sign in to your Ollama account and create an API key.{' '}
+              <SourceLink url="https://ollama.com/settings/keys">Create a key</SourceLink>
+            </li>
+            <li>
+              Paste the key below, choose a cloud model and select{' '}
+              <strong>Connect &amp; test</strong>. StockReplay checks web search and model
+              generation separately.
+            </li>
+            <li>
+              Search a ticker in Research, generate Buy and Risk scores, or open{' '}
+              <strong>Future</strong> on its price chart and generate a forecast.
+            </li>
+          </ol>
+          <p>
+            Ollama charges per token for hosted generation, including the connection test. Select
+            Free on this Mac to generate locally with this website’s web search.{' '}
+            <SourceLink url="https://ollama.com/settings">Check usage</SourceLink> ·{' '}
+            <SourceLink url="https://ollama.com/pricing">Cloud pricing</SourceLink> ·{' '}
+            <SourceLink url="https://docs.ollama.com/capabilities/web-search">
+              Web search guide
+            </SourceLink>
+          </p>
+        </div>
+      ) : (
+        <p>
+          OpenAI runs in the cloud. Your API project pays for the connection test, scores and chat.
+        </p>
+      )}
       <form
         className="stack"
         onSubmit={(e) => {
@@ -69,7 +113,7 @@ function OpenAISettings({
           void test()
         }}
       >
-        <Field name="OpenAI API key">
+        <Field name={ollama ? 'Ollama website API key' : 'OpenAI API key'}>
           <input
             type="password"
             autoComplete="off"
@@ -88,14 +132,14 @@ function OpenAISettings({
         </Field>
         <Field name="API model">
           <select value={model} onChange={(e) => setModel(e.target.value)}>
-            {(candidateModels || models.data?.models || [{ id: model, label: model }]).map((m) => (
+            {options.map((m) => (
               <option value={m.id} key={m.id}>
                 {m.label}
               </option>
             ))}
           </select>
         </Field>
-        {key.trim() && (
+        {!ollama && key.trim() && (
           <button
             className="text-btn model-lookup"
             type="button"
@@ -107,7 +151,7 @@ function OpenAISettings({
                 const v = await api<{
                   models: { id: string; label: string }[]
                   source: string
-                }>('/openai/models', 'POST', { key: key.trim() })
+                }>(endpoint + '/models', 'POST', { key: key.trim() })
                 setCandidateModels(v.models)
                 if (!v.models.some((m) => m.id === model) && v.models[0]) setModel(v.models[0].id)
                 setNote(
@@ -144,9 +188,11 @@ function OpenAISettings({
             disabled={busy || discovering || (!connection?.configured && !key.trim())}
           >
             {busy ? (
-              <Busy text="Testing generation" />
+              <Busy text={ollama ? 'Checking model and web search' : 'Testing generation'} />
             ) : dirty || !connection?.configured ? (
               'Connect & test'
+            ) : ollama ? (
+              'Test model and web search'
             ) : (
               'Test generation'
             )}
@@ -159,7 +205,7 @@ function OpenAISettings({
               onClick={async () => {
                 wait(true)
                 try {
-                  changed(await api<Connection>('/openai', 'DELETE'))
+                  changed(await api<Connection>(endpoint, 'DELETE'))
                   setKey('')
                   setNote('Key removed.')
                   fail('')
@@ -175,18 +221,36 @@ function OpenAISettings({
           )}
         </div>
       </form>
-      {connection?.configured && (
-        <p className="connection-state">
-          {connection.verified ? <Check size={15} /> : <KeyRound size={15} />}{' '}
-          {connection.verified ? 'Verified for generation' : 'Saved key · test to verify'} ·{' '}
-          {connection.model}
-        </p>
+      {ollama && connection?.configured ? (
+        <div className="hosted-checks" role="status">
+          <p>
+            <strong>Model generation</strong> · {connection.verified ? 'Verified' : 'Unverified'} ·{' '}
+            {connection.model}
+          </p>
+          {connection.generation_detail && <small>{connection.generation_detail}</small>}
+          <p>
+            <strong>Web search</strong> ·{' '}
+            {connection.web_search?.verified ? 'Verified' : 'Unverified'}
+          </p>
+          {connection.web_search?.detail && <small>{connection.web_search.detail}</small>}
+        </div>
+      ) : (
+        connection?.configured && (
+          <p className="connection-state">
+            {connection.verified ? <Check size={15} /> : <KeyRound size={15} />}{' '}
+            {connection.verified ? 'Verified for generation' : 'Saved key · test to verify'} ·{' '}
+            {connection.model}
+          </p>
+        )
       )}
       {note && <p role="status">{note}</p>}
       <ErrorBox text={error || models.error} />
       <small>
-        The test sends a small generation request. Research sends public evidence. Chat sends the
-        messages you enter. Your saved statements and positions stay on this Mac.
+        {ollama
+          ? 'The test sends one public search and a small generation request to Ollama.'
+          : 'The test sends a small generation request.'}{' '}
+        Research sends public evidence. Chat sends the messages you enter. Your saved statements and
+        positions stay on this Mac.
       </small>
     </>
   )
@@ -247,7 +311,8 @@ export function Settings({
               disabled={busy || switching}
               onChange={(event) => void switchProvider(event.target.value as AIProvider)}
             >
-              <option value="ollama">Free on this Mac (Ollama)</option>
+              <option value="ollama_cloud">Ollama Cloud API + web search (metered)</option>
+              <option value="ollama">Free on this Mac (Ollama + website web search)</option>
               <option value="openai">OpenAI API (paid)</option>
             </select>
           </Field>
@@ -255,14 +320,24 @@ export function Settings({
           {switching ? (
             <Busy text="Switching provider" />
           ) : provider === 'ollama' ? (
-            <LocalModelConnection
+            <>
+              <OllamaSearchKey busy={busy} wait={wait} />
+              <LocalModelConnection
+                connection={connection}
+                changed={changed}
+                busy={busy}
+                wait={wait}
+              />
+            </>
+          ) : (
+            <HostedAISettings
+              key={provider}
+              provider={provider}
               connection={connection}
               changed={changed}
               busy={busy}
               wait={wait}
             />
-          ) : (
-            <OpenAISettings connection={connection} changed={changed} busy={busy} wait={wait} />
           )}
         </section>
         <div className="stack">

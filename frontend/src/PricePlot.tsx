@@ -1,3 +1,4 @@
+import { rangePath } from './priceRanges'
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { api, errorText, pct } from './types'
 import { Busy, ErrorBox } from './ui'
@@ -62,15 +63,13 @@ export function usePricePackets<T extends Prices = Prices>(requests: PriceReques
   }
 }
 export function usePrices(symbols: string[], span: string, snapshot = '', version = 0) {
+  const [start, end] = span.split('/')
   return usePricePackets(
     symbols.map((symbol) => ({
       symbol,
       path: snapshot
         ? '/prices/imports/' + encodeURIComponent(snapshot)
-        : '/desk/chart/' +
-          encodeURIComponent(symbol) +
-          '?interval=1d&span=' +
-          encodeURIComponent(span) +
+        : rangePath(symbol, end ? 'custom' : span, start, end) +
           (version ? '&refresh=true&v=' + version : ''),
     })),
     !!snapshot,

@@ -16,8 +16,9 @@ import { api, errorText, pct } from './types'
 import { Busy, ErrorBox, Field, Modal } from './ui'
 import { useResource, SourceLink } from './deskCommon'
 import { usePricePackets, PricePlot } from './PricePlot'
-import { rangePresets, rangePath, rangeLabel, type RangePrices } from './ResearchRange'
+import { rangePresets, rangePath, rangeLabel, type RangePrices } from './priceRanges'
 import { Gauge } from './Research'
+import { futureHref } from './forecastSnapshot'
 import { calendarHref } from './forecastData'
 import { NewsPreviews } from './NewsPreviews'
 import { amount, shortDay, type Source, type SavedList, type Opinion } from './workspace'
@@ -398,17 +399,24 @@ function ChartBlock({ block }: { block: TabBlock }) {
       <PricePlot series={prices.series} compact />
       <div className="tab-chart-returns">
         {prices.series.map((s) => (
-          <a
-            key={s.symbol}
-            href={
-              '#/research/' +
-              encodeURIComponent(s.symbol) +
-              '/range_' +
-              (to ? 'custom_' + from + '_' + to : period)
-            }
-          >
-            {s.symbol} <strong>{pct(s.performance.percent)}</strong>
-          </a>
+          <span key={s.symbol} className="tab-chart-period-links">
+            <a
+              href={
+                '#/research/' +
+                encodeURIComponent(s.symbol) +
+                '/range_' +
+                (to ? 'custom_' + from + '_' + to : period)
+              }
+            >
+              {s.symbol} <strong>{pct(s.performance.percent)}</strong>
+            </a>
+            <a
+              href={futureHref(s.symbol, period === 'custom' ? '6mo' : period)}
+              aria-label={'Open ' + s.symbol + ' Future chart'}
+            >
+              Future
+            </a>
+          </span>
         ))}
       </div>
     </>

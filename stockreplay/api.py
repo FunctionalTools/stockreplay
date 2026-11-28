@@ -8,7 +8,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
@@ -324,6 +324,11 @@ def create_app(root=None):
     register_reading_list(app, db)
     dist = Path(__file__).resolve().parents[1] / "frontend" / "dist"
     if dist.is_dir():
+        @app.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)
+        @app.api_route("/index.html", methods=["GET", "HEAD"], include_in_schema=False)
+        def workspace_page():
+            return FileResponse(dist / "index.html", headers={"Cache-Control": "no-cache"})
+
         app.mount("/", StaticFiles(directory=dist, html=True), name="terminal")
     return app
 

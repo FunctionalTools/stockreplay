@@ -13,7 +13,7 @@ export const firstPreferences: Preferences = {
   home_mode: 'portfolio',
   home_symbol: 'SPY',
 }
-export type AIProvider = 'ollama' | 'openai'
+export type AIProvider = 'ollama' | 'ollama_cloud' | 'openai'
 export type Connection = {
   provider: AIProvider
   configured: boolean
@@ -21,6 +21,8 @@ export type Connection = {
   verified_at: string | null
   model: string
   storage: string
+  web_search?: { verified: boolean; verified_at?: string | null; detail?: string }
+  generation_detail?: string
 }
 export type SavedList = { id: string; name: string; symbols: string[] }
 export type Source = {

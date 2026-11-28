@@ -10,6 +10,7 @@ import httpx
 from fastapi import HTTPException
 from pydantic import Field
 
+from .ollama_cloud import OllamaCloudResearch, OllamaSearchConnection
 from .assistant_shortcuts import ALIASES, KNOWN, PERIODS
 from .openai_research import (
     array,
@@ -31,7 +32,7 @@ TEXT = {"type": "string"}
 
 
 class ProviderChoice(Model):
-    provider: Literal["ollama", "openai"]
+    provider: Literal["ollama", "openai", "ollama_cloud"]
 
 
 class LocalModel(Model):
@@ -110,6 +111,33 @@ def valid_shape(value, spec):
             return False
         return spec.get("minimum", float("-inf")) <= value <= spec.get("maximum", float("inf"))
     return True
+
+
+def company_news_sources(items):
+    """Use two different original URLs, retaining an independent publisher alongside hosted search."""
+    rows = sorted(
+        ((sid, e) for sid, e in items.items() if factor_key(e) == "company_news"),
+        key=lambda row: (
+            row[1].get("scope") == "Article passage",
+            row[1].get("date_kind") == "published",
+            bool(row[1].get("excerpt")),
+            row[1]["date"],
+        ),
+        reverse=True,
+    )
+    if not rows:
+        return []
+    first = next(
+        (row for row in rows if row[1].get("discovered_via") == "Ollama Web Search"), rows[0]
+    )
+    alternatives = [row for row in rows if row[1]["url"] != first[1]["url"]]
+    if not alternatives:
+        return [first]
+    second = next(
+        (row for row in alternatives if row[1].get("discovered_via") != "Ollama Web Search"),
+        alternatives[0],
+    )
+    return [first, second]
 
 
 class OllamaResearch:
@@ -469,7 +497,7 @@ class OllamaResearch:
         result = self.generate(
             model,
             object_schema(fields),
-            "Build the stock research dashboard requested by the user. Fill every required slot in order. Chart takes one or more comma-separated ticker symbols and a span (1d, 5d, 1mo, 3mo, 6mo, ytd, 1y, 2y, 5y, 10y, max, or YYYY-MM-DD/YYYY-MM-DD; default 1y). News, scores and ratings take a ticker symbol. Watchlist uses its requested local name or empty, portfolio uses empty, note uses the requested text. Preserve the requested tab title.",
+            "Build the stock research dashboard requested by the user. Fill every required slot in order. Chart takes one or more comma-separated ticker symbols and a span (1d, 5d, 1w, 1mo, 3mo, 6mo, ytd, 1y, 2y, 5y, 10y, max, or YYYY-MM-DD/YYYY-MM-DD; default 1y). News, scores and ratings take a ticker symbol. Watchlist uses its requested local name or empty, portfolio uses empty, note uses the requested text. Preserve the requested tab title.",
             {"request": message, "current_symbol": symbol, "widgets": prompts},
             min(2000, 180 + 100 * len(sections)),
         )
@@ -599,7 +627,7 @@ class OllamaResearch:
                 "Build the requested saved StockReplay tab. Output its requested title, operation create, empty value, and blocks in order. "
                 "Graph/chart uses one to four comma-separated ticker symbols as value. News, scores and ratings each use one ticker. "
                 "Use watchlist with its name, portfolio with empty value, or note with requested text. "
-                "Span is 1d,5d,1mo,3mo,6mo,ytd,1y,2y,5y,10y,max or YYYY-MM-DD/YYYY-MM-DD; default 1y. "
+                "Span is 1d,5d,1w,1mo,3mo,6mo,ytd,1y,2y,5y,10y,max or YYYY-MM-DD/YYYY-MM-DD; default 1y. "
                 'Example action for an annual Apple chart: {"tab":{"operation":"create","name":"Apple review","value":"","blocks":[{"view":"chart","value":"AAPL","span":"1y"}]}}. '
                 "Use the actual user's requested title and tickers. Leave reply empty and links empty."
             )
@@ -628,6 +656,7 @@ class OllamaResearch:
         groups = {
             k: [(sid, e) for sid, e in items.items() if factor_key(e) == k][:2] for k in FACTORS
         }
+        groups["company_news"] = company_news_sources(items)
         groups = {k: v for k, v in groups.items() if v}
         indexed = dict(row for rows in groups.values() for row in rows)
 
@@ -773,6 +802,8 @@ class Providers:
         self.db = db
         self.openai = openai
         self.ollama = OllamaResearch(db)
+        self.ollama_cloud = OllamaCloudResearch(db)
+        self.ollama_search = OllamaSearchConnection(db, self.ollama_cloud)
         with db.connect() as c:
             c.execute(
                 "create table if not exists ai_settings(id integer primary key,provider text not null,ollama_model text, revision integer not null)"
@@ -785,7 +816,20 @@ class Providers:
     def active(self):
         with self.db.connect() as c:
             name = c.execute("select provider from ai_settings where id=1").fetchone()[0]
-        return self.openai if name == "openai" else self.ollama
+        return {"openai": self.openai, "ollama": self.ollama, "ollama_cloud": self.ollama_cloud}[
+            name
+        ]
+
+    def reject_credentials(self, text):
+        from .assistant import reject_key
+
+        reject_key(text)
+        # A saved API key is at least 15 printable, non-space ASCII characters.
+        if re.search(r"[!-~]{15}", text) and any(
+            connection.contains_secret(text)
+            for connection in (self.ollama_search, self.ollama_cloud, self.openai)
+        ):
+            raise ValueError("Enter API keys in Settings. Remove the key from your message.")
 
     def select(self, provider):
         with self.db.connect() as c:
@@ -810,10 +854,10 @@ class Providers:
                 "The selected AI provider changed during verification. Check Settings and retry.",
             )
 
-    def configure_openai(self, settings):
+    def configure_hosted(self, gateway, settings):
         revision = self.revision()
-        result = self.openai.set(settings)
-        self.activate_verified("openai", revision)
+        result = gateway.set(settings)
+        self.activate_verified(gateway.provider, revision)
         return result
 
     def configure_ollama(self, model):

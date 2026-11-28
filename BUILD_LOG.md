@@ -1,9 +1,11 @@
 # Verification record
 
+The homepage forecast can be checked on a fresh Apple silicon runner by enabling `live_forecast`. It reads live public data, calls an installed model and verifies the resulting chart, sources and saved forecast. Browser tests cover the exact clipped conversation, line placement, period selection and the custom Future date flow. Authenticated Ollama website tests accept separate, opt-in credentials for search and metered inference.
+
 The free local integration check downloads a pinned Ollama runtime and runs the recommended model on an Apple silicon runner. It exercises the same local model selector, generation check, free source search, Buy and Risk assessment, local archive and cited chat routes as the website. Dispatch the macOS workflow with `live_ollama` and `live_providers` enabled to reproduce it. The deterministic suite also covers offline sources, model selection, forecast paths, calendar events and keyboard replay.
 
 
-Research opens the Forecast calendar for the selected stock. Watchlists, Portfolio and Settings share the same local workspace. Prices, published ratings, historical risk metrics and source links are generated from provider responses. The application ships without a sample portfolio, research score or news feed.
+Research opens Past and Future on the same stock price card. Watchlists, Portfolio and Settings share the same local workspace. Prices, published ratings, historical risk metrics and source links are generated from provider responses. The application ships without a sample portfolio, research score or news feed.
 
 ## Tests
 

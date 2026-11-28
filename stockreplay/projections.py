@@ -164,7 +164,26 @@ def simulate(symbol, seed, as_of, closes, steps, sessions_per_year):
     return bands, float(100 * recent_std * np.sqrt(sessions_per_year)), check_one_session(returns)
 
 
-def project_one(data, symbol, horizon, seed, instant, cutoff):
+def horizon_end(day, horizon, custom_end):
+    if horizon == "custom":
+        if not custom_end or custom_end > (pd.Timestamp(day) + pd.DateOffset(years=10)).date():
+            raise ValueError("Choose a future end date within ten years of the anchor.")
+        return pd.Timestamp(custom_end)
+    if horizon == "ytd":
+        return pd.Timestamp(date(day.year, 12, 31))
+    additional = {
+        "5d": pd.DateOffset(days=14),
+        "3mo": pd.DateOffset(months=3),
+        "2y": pd.DateOffset(years=2),
+        "10y": pd.DateOffset(years=10),
+        "max": pd.DateOffset(years=10),
+    }
+    return pd.Timestamp(day) + (
+        additional.get(horizon) or HORIZONS[horizon] or pd.DateOffset(days=1)
+    )
+
+
+def project_one(data, symbol, horizon, seed, instant, cutoff, *, start_date=None, end_date=None):
     name = venue(data)
     zone = data.get("timezone") or ("UTC" if name == "24/7" else "")
     try:
@@ -174,7 +193,11 @@ def project_one(data, symbol, horizon, seed, instant, cutoff):
     day = cutoff or local_today
     if day > local_today:
         raise ValueError("Choose an observation date that has already occurred on this exchange.")
-    target = pd.Timestamp(day) + (HORIZONS[horizon] or pd.DateOffset(days=1))
+    if horizon == "custom" and (not start_date or not end_date or end_date < start_date):
+        raise ValueError("Choose ordered start and end dates.")
+    if horizon == "custom" and end_date < day - timedelta(days=31):
+        raise ValueError("Choose custom dates after the latest completed close.")
+    target = horizon_end(day, horizon, end_date)
     cal = exchange_calendar(name, day.year - 6, (target + timedelta(days=10)).date().isoformat())
     anchor = latest_session(cal, day, instant)
     as_of = anchor.date().isoformat()
@@ -185,11 +208,18 @@ def project_one(data, symbol, horizon, seed, instant, cutoff):
         raise MissingClose(
             f"The latest completed close on {as_of} is missing from the price source."
         )
-    future = (
-        pd.DatetimeIndex([cal.next_session(anchor)])
-        if horizon == "1d"
-        else cal.sessions_in_range(cal.next_session(anchor), anchor + HORIZONS[horizon])
-    )
+    first = cal.next_session(anchor)
+    if horizon == "1d":
+        future = pd.DatetimeIndex([first])
+    elif horizon == "5d":
+        future = cal.sessions_window(first, 5)
+    else:
+        if horizon == "custom" and start_date <= anchor.date():
+            raise ValueError("Choose custom dates after the latest completed close.")
+        end = target if horizon in {"ytd", "custom"} else horizon_end(anchor.date(), horizon, None)
+        future = cal.sessions_in_range(first, end) if end >= first else []
+        if horizon == "custom" and not any(s.date() >= start_date for s in future):
+            raise ValueError("The custom dates contain no scheduled trading session.")
     if not len(future):
         raise ValueError("The selected horizon contains no scheduled future session.")
     observations = [

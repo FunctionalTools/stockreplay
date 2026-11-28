@@ -6,7 +6,7 @@ The service binds to the loopback address. The default port is 8765. The launche
 
 ## Updating
 
-In your existing checkout run `git pull --ff-only origin main`, then reopen **StockReplay.command**. The launcher checks a fingerprint of the application and dependency files. It rebuilds and restarts a previous tracked version when necessary. An update preserves the SQLite file and its holdings, watchlists, chart layouts, key settings and saved assessments. A session-only key must be re-entered after the service restarts. A saved Keychain entry can be reverified in Settings.
+In your existing checkout run `git pull --ff-only origin main`, then reopen **StockReplay.command**. Use the same checkout that contains your data and reopen its launcher. It opens a build-specific URL and the browser revalidates the launch page. The launcher checks a fingerprint of the application and dependency files. It rebuilds and restarts a previous tracked version when necessary. An update preserves the SQLite file and its holdings, watchlists, chart layouts, key settings and saved assessments. A session-only key must be re-entered after the service restarts. A saved Keychain entry can be reverified in Settings.
 
 ## Free local AI on a MacBook
 
@@ -17,6 +17,12 @@ In your existing checkout run `git pull --ff-only origin main`, then reopen **St
 5. In Research, pick a ticker and choose **Generate scores**. Open a reason’s citation to see its publisher and date. The assistant uses the same provider. Open Calendar to explore price scenarios and dated events. Forecast and market data access do not require model setup.
 
 The local path needs no subscription, account, remote model or paid key. StockReplay fetches publicly available research online. Ollama runs locally at `127.0.0.1:11434`. If Settings shows no models, open Ollama, finish the download and refresh. Test the service with `curl http://127.0.0.1:11434/api/tags`. If the app is closed, `ollama serve` in a separate Terminal window starts the service. Reopen Terminal after installing the CLI if the command is unavailable. Public sources can withhold or delay data. Check the evidence timestamp and coverage for the selected stock. [Ollama troubleshooting](https://docs.ollama.com/troubleshooting)
+
+## Add Ollama website search
+
+With **Free on this Mac** selected, create an Ollama website key, paste it into **Ollama web search API key**, and click **Test web search**. This checks the live search endpoint. Choose macOS Keychain to keep the key after restarting. Use **Research → Future** to request a forecast after connecting your local model. The website key gives the app access to public web search. The local Ollama installation supplies the model for generation. [Create an Ollama key](https://ollama.com/settings/keys) · [Web search documentation](https://docs.ollama.com/capabilities/web-search)
+
+To run inference on Ollama’s servers, select **Ollama Cloud API + web search (metered)**, paste the key, choose a model and click **Connect & test**. The app checks generation and search independently. Check your account’s balance and model pricing before choosing hosted inference. [Account usage](https://ollama.com/settings) · [Model prices](https://ollama.com/pricing)
 
 ## Optional OpenAI connection
 

@@ -1,4 +1,9 @@
-.sr-assistant.assistant {
+.sr-assistant {
+  position: fixed;
+  z-index: 12;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
   --chat-edge: max(12px, env(safe-area-inset-bottom));
   inset: auto max(12px, env(safe-area-inset-right)) var(--chat-edge) auto;
   max-width: calc(100vw - 24px);
@@ -117,11 +122,18 @@
   font-size: 12px;
   min-height: 28px;
 }
-.sr-assistant .bubble {
-  position: relative;
-  width: fit-content;
+.sr-assistant .chat-transcript {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 9px;
+}
+.sr-assistant .chat-entry {
+  display: flow-root;
+  position: static;
+  flex: none;
   max-width: 100%;
-  margin: 0 0 9px;
+  margin: 0;
   padding: 8px 10px;
   font-size: 13px;
   border: 1px solid var(--line);
@@ -129,19 +141,19 @@
   background: var(--bg);
   overflow-wrap: anywhere;
 }
-.sr-assistant .bubble.user {
-  margin-left: auto;
+.sr-assistant .chat-entry[data-speaker='user'] {
+  align-self: flex-end;
   max-width: 91%;
   background: var(--accent-soft);
   border: 0;
   border-radius: 12px 3px 12px 12px;
 }
-.sr-assistant .bubble:has(.chat-graph),
-.sr-assistant .bubble:has(.local-values) {
+.sr-assistant .chat-entry:has(.chat-graph),
+.sr-assistant .chat-entry:has(.local-values) {
   width: 100%;
 }
 .sr-assistant .chat-text,
-.sr-assistant .bubble .chat-text {
+.sr-assistant .chat-entry .chat-text {
   margin: 0;
   white-space: pre-wrap;
   line-height: 1.48;
@@ -353,7 +365,7 @@
   }
 }
 @media (max-width: 460px) {
-  .sr-assistant.assistant {
+  .sr-assistant {
     right: max(8px, env(safe-area-inset-right));
     bottom: max(9px, env(safe-area-inset-bottom));
   }

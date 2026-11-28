@@ -14,6 +14,7 @@ import { Download, Play, Pause, Save } from 'lucide-react'
 import { api, errorText } from './types'
 import { useResource, PacketNote, FetchState, SourceLink, fmt, type Packet } from './deskCommon'
 import { Field, ErrorBox } from './ui'
+import { rangeLabel } from './priceRanges'
 import type { Intent } from './workspace'
 import { indicatorsFor, type Bar, type Sample } from './studies'
 type Series = {
@@ -58,7 +59,7 @@ const ranges: Record<string, string[]> = {
   '5m': ['5d', '1mo'],
   '15m': ['5d', '1mo'],
   '1h': ['1mo', '3mo', '1y'],
-  '1d': ['1mo', '6mo', '1y', '2y', '5y', '10y'],
+  '1d': ['1mo', '5d', '1w', '3mo', '6mo', 'ytd', '1y', '2y', '5y', '10y', 'max'],
   '1wk': ['1y', '5y', '10y'],
   '1mo': ['5y', '10y', 'max'],
 }
@@ -696,7 +697,9 @@ export function ChartDesk({
           <Field name="Chart range">
             <select value={layout.span} onChange={(e) => change({ span: e.target.value })}>
               {ranges[layout.interval].map((v) => (
-                <option key={v}>{v}</option>
+                <option key={v} value={v}>
+                  {rangeLabel(v)}
+                </option>
               ))}
             </select>
           </Field>

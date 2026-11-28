@@ -15,13 +15,29 @@ export const lineColors = [
   '#8c8642',
   '#8c719d',
 ]
-const H = 266,
-  L = 66,
+const L = 66,
   R = 16,
-  T = 24,
-  B = 207
+  T = 24
+function markerLabel(event: MarketEvent) {
+  if (event.kind === 'fiscal') return event.title.match(/\bQ[1-4]\b/i)?.[0].toUpperCase() || 'FY'
+  if (event.kind === 'earnings') return 'EPS'
+  if (event.kind === 'dividend') return 'Div'
+  if (event.kind === 'macro')
+    return /federal reserve|fomc|\bfed\b/i.test(event.title) ? 'Fed' : 'Econ'
+  if (event.kind === 'regulatory') return 'Rule'
+  if (event.kind === 'legislative') return 'Bill'
+  return 'Co.'
+}
 type Mark = { date: string; value: number }
-function plotModel(series: Forecast[], events: MarketEvent[], symbols: string[], W: number) {
+function plotModel(
+  series: Forecast[],
+  events: MarketEvent[],
+  symbols: string[],
+  W: number,
+  B: number,
+  forwardStart?: string,
+  civilEnd?: string,
+) {
   const anchor = latestSharedClose(series)
   if (!anchor) return null
   const compare = series.length > 1
@@ -30,25 +46,42 @@ function plotModel(series: Forecast[], events: MarketEvent[], symbols: string[],
       const basis = s.history.find((p) => p.date === anchor)!.price
       const transform = (v: number) => (compare ? (v / basis - 1) * 100 : v)
       const history = s.history.map((p) => ({ date: p.date, value: transform(p.price) }))
-      const points = s.points.map((p) => ({
-        date: p.date,
-        low: transform(p.low),
-        value: transform(p.median),
-        high: transform(p.high),
-      }))
+      const points = s.points
+        .filter((p) => !forwardStart || p.date >= forwardStart)
+        .map((p) => ({
+          baseline: p.baseline == null ? null : transform(p.baseline),
+          date: p.date,
+          low: transform(p.low),
+          value: transform(p.median),
+          high: transform(p.high),
+        }))
       for (const p of [...history, ...points]) allDates.add(p.date)
       return { s, history, points, basis, color: lineColors[symbols.indexOf(s.symbol)] }
     })
   const priceDays = [...allDates].sort()
   const first = priceDays[0],
-    last = priceDays[priceDays.length - 1]
+    last =
+      civilEnd && civilEnd > priceDays[priceDays.length - 1]
+        ? civilEnd
+        : priceDays[priceDays.length - 1]
+  allDates.add(last)
   for (const e of events) if (e.date >= first && e.date <= last) allDates.add(e.date)
   const dates = [...allDates].sort()
   const low = Math.min(
-    ...lines.map((l) => Math.min(...l.history.map((p) => p.value), ...l.points.map((p) => p.low))),
+    ...lines.map((l) =>
+      Math.min(
+        ...l.history.map((p) => p.value),
+        ...l.points.map((p) => Math.min(p.low, p.baseline ?? p.low)),
+      ),
+    ),
   )
   const high = Math.max(
-    ...lines.map((l) => Math.max(...l.history.map((p) => p.value), ...l.points.map((p) => p.high))),
+    ...lines.map((l) =>
+      Math.max(
+        ...l.history.map((p) => p.value),
+        ...l.points.map((p) => Math.max(p.high, p.baseline ?? p.high)),
+      ),
+    ),
   )
   const padding = (high - low) * 0.09 || Math.max(Math.abs(low) * 0.005, 0.001)
   const bottom = low - padding,
@@ -85,6 +118,11 @@ function plotModel(series: Forecast[], events: MarketEvent[], symbols: string[],
       ...line,
       historical: path(line.history),
       median: path(line.points),
+      baseline: path(
+        line.points.flatMap((p) =>
+          p.baseline == null ? [] : [{ date: p.date, value: p.baseline }],
+        ),
+      ),
       low: path(lows),
       high: path(highs),
       band: path([...highs, ...lows.reverse()]) + ' Z',
@@ -95,7 +133,7 @@ function plotModel(series: Forecast[], events: MarketEvent[], symbols: string[],
     if (e.date < first || e.date > last) continue
     const pos = x(e.date),
       tail = markers[markers.length - 1]
-    if (tail && pos - tail.x < 24) tail.events.push(e)
+    if (tail && pos - tail.x < (W < 500 ? 36 : 49)) tail.events.push(e)
     else markers.push({ x: pos, events: [e] })
   }
   return {
@@ -121,6 +159,9 @@ export function ForecastChart({
   date,
   choose,
   preview,
+  compact = false,
+  forwardStart,
+  civilEnd,
 }: {
   series: Forecast[]
   symbols: string[]
@@ -128,10 +169,18 @@ export function ForecastChart({
   date: string
   choose: (d: string) => void
   preview: (event: MarketEvent) => void
+  compact?: boolean
+  forwardStart?: string
+  civilEnd?: string
 }) {
   const host = useRef<HTMLDivElement>(null),
     [W, setWidth] = useState(920)
-  const model = useMemo(() => plotModel(series, events, symbols, W), [series, events, symbols, W])
+  const H = compact ? 211 : 266,
+    B = compact ? 158 : 207
+  const model = useMemo(
+    () => plotModel(series, events, symbols, W, B, forwardStart, civilEnd),
+    [series, events, symbols, W, B, forwardStart, civilEnd],
+  )
   const available = !!model
   useEffect(() => {
     if (!host.current || !available) return
@@ -186,10 +235,29 @@ export function ForecastChart({
           notation: Math.abs(v) >= 10000 ? 'compact' : 'standard',
           maximumFractionDigits: Math.abs(v) < 1 ? 4 : 2,
         }).format(v)
+  const inspected = series[0]
+  const observed = inspected.history.find((p) => p.date === position)
+  const projected =
+    position > inspected.as_of ? inspected.points.find((p) => p.date === position) : undefined
   return (
-    <div ref={host} className="forecast-chart">
+    <div
+      ref={host}
+      className={
+        compact ? 'forecast-chart fc-inline' + (compare ? ' fc-compare' : '') : 'forecast-chart'
+      }
+    >
       <div className="forecast-chart-heading">
         <div>
+          {compact && compare && (
+            <div className="future-chart-key">
+              {lines.map((l) => (
+                <span key={l.s.symbol}>
+                  <i style={{ background: l.color }} />
+                  {l.s.symbol}
+                </span>
+              ))}
+            </div>
+          )}
           <h2>{compare ? 'Projected returns' : 'Price projection'}</h2>
           <small>
             {compare
@@ -208,12 +276,24 @@ export function ForecastChart({
           </span>
           <span>
             <i />
-            Median forecast
+            {compact ? 'AI median' : 'Median forecast'}
           </span>
           <span>
             <i />
             10th–90th percentile
           </span>
+          {compact && lines.some((l) => l.baseline) && (
+            <span className="fc-baseline-key">
+              <i />
+              Price-history baseline
+            </span>
+          )}
+          {compact && markers.length > 0 && (
+            <span className="fc-event-key">
+              <i />
+              Event or expectation
+            </span>
+          )}
         </div>
       </div>
       <div
@@ -255,6 +335,33 @@ export function ForecastChart({
               <path data-line="lower" d={l.low} opacity=".65" strokeWidth="1" />
               <path data-line="upper" d={l.high} opacity=".65" strokeWidth="1" />
               <path data-line="actual" d={l.historical} strokeWidth="2" />
+              {l.baseline && (
+                <path
+                  data-line="baseline"
+                  d={l.baseline}
+                  stroke={compare ? l.color : 'var(--muted)'}
+                  opacity={compare ? 0.64 : 1}
+                  strokeDasharray="2 4"
+                  strokeWidth="1.8"
+                />
+              )}
+              {l.points.length === 1 && (
+                <line
+                  x1={x(l.points[0].date)}
+                  x2={x(l.points[0].date)}
+                  y1={y(l.points[0].low)}
+                  y2={y(l.points[0].high)}
+                  strokeWidth="2.5"
+                />
+              )}
+              {compact && l.points.at(-1) && (
+                <circle
+                  cx={x(l.points.at(-1)!.date)}
+                  cy={y(l.points.at(-1)!.value)}
+                  r="2.8"
+                  fill={l.color}
+                />
+              )}
               <path data-line="median" d={l.median} strokeDasharray="5 4" strokeWidth="2.4" />
             </g>
           ))}
@@ -308,7 +415,9 @@ export function ForecastChart({
           <button
             key={m.events[0].id}
             className="forecast-marker"
-            style={{ left: (m.x / W) * 100 + '%' }}
+            style={{ left: (Math.min(W - 24, m.x) / W) * 100 + '%' }}
+            data-kind={m.events[0].kind}
+            title={m.events.map((e) => e.title).join(' · ')}
             aria-label={
               m.events.length === 1
                 ? m.events[0].title
@@ -321,7 +430,8 @@ export function ForecastChart({
               openEvents(m.events)
             }}
           >
-            {m.events.length > 1 ? m.events.length : '•'}
+            {markerLabel(m.events[0])}
+            {m.events.length > 1 && <sup>+{m.events.length - 1}</sup>}
           </button>
         ))}
         {popup && (
@@ -419,52 +529,71 @@ export function ForecastChart({
         </button>
         <output>{shortDay(position)}</output>
       </div>
-      <div className="table-wrap">
-        <table className="forecast-values" aria-label="Prices on inspected date">
-          <thead>
-            <tr>
-              <th>Ticker</th>
-              <th>Observed close</th>
-              <th>Median forecast</th>
-              <th>10th–90th percentile</th>
-            </tr>
-          </thead>
-          <tbody>
-            {lines.map(({ s, color, basis }) => {
-              const actual = s.history.find((p) => p.date === position),
-                point = position > s.as_of ? s.points.find((p) => p.date === position) : undefined
-              const display = (v: number) =>
-                marketPrice(v, s.currency) +
-                (compare
-                  ? ' (' +
-                    new Intl.NumberFormat(undefined, {
-                      style: 'percent',
-                      signDisplay: 'exceptZero',
-                      maximumFractionDigits: 2,
-                    }).format(v / basis - 1) +
-                    ')'
-                  : '')
-              return (
-                <tr key={s.symbol}>
-                  <th>
-                    <i style={{ background: color }} />
-                    {s.symbol} <small>{s.currency}</small>
-                  </th>
-                  <td>{actual ? display(actual.price) : '—'}</td>
-                  <td>{point ? display(point.median) : '—'}</td>
-                  <td>
-                    {point
-                      ? marketPrice(point.low, s.currency) +
-                        ' – ' +
-                        marketPrice(point.high, s.currency)
-                      : '—'}
-                  </td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
-      </div>
+      {compact && !compare ? (
+        <div className="future-inspected">
+          <strong>{series[0].symbol}</strong>
+          {projected ? (
+            <>
+              <span>AI median {marketPrice(projected.median, inspected.currency)}</span>
+              <span>
+                Modeled range {marketPrice(projected.low, inspected.currency)} –{' '}
+                {marketPrice(projected.high, inspected.currency)}
+              </span>
+            </>
+          ) : observed ? (
+            <span>Observed close {marketPrice(observed.price, inspected.currency)}</span>
+          ) : (
+            <span>No trading session on this date</span>
+          )}
+        </div>
+      ) : (
+        <div className="table-wrap">
+          <table className="forecast-values" aria-label="Prices on inspected date">
+            <thead>
+              <tr>
+                <th>Ticker</th>
+                <th>Observed close</th>
+                <th>Median forecast</th>
+                <th>10th–90th percentile</th>
+              </tr>
+            </thead>
+            <tbody>
+              {lines.map(({ s, color, basis }) => {
+                const actual = s.history.find((p) => p.date === position),
+                  point = position > s.as_of ? s.points.find((p) => p.date === position) : undefined
+                const display = (v: number) =>
+                  marketPrice(v, s.currency) +
+                  (compare
+                    ? ' (' +
+                      new Intl.NumberFormat(undefined, {
+                        style: 'percent',
+                        signDisplay: 'exceptZero',
+                        maximumFractionDigits: 2,
+                      }).format(v / basis - 1) +
+                      ')'
+                    : '')
+                return (
+                  <tr key={s.symbol}>
+                    <th>
+                      <i style={{ background: color }} />
+                      {s.symbol} <small>{s.currency}</small>
+                    </th>
+                    <td>{actual ? display(actual.price) : '—'}</td>
+                    <td>{point ? display(point.median) : '—'}</td>
+                    <td>
+                      {point
+                        ? marketPrice(point.low, s.currency) +
+                          ' – ' +
+                          marketPrice(point.high, s.currency)
+                        : '—'}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   )
 }

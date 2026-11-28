@@ -10,6 +10,7 @@ from .trading_calendar import calendar
 RANGE_PRESETS = (
     "1d",
     "5d",
+    "1w",
     "1mo",
     "3mo",
     "6mo",
@@ -21,6 +22,11 @@ RANGE_PRESETS = (
     "max",
     "custom",
 )
+
+
+def week_start(last_day):
+    """Calendar-week boundary for a window ending at the last observed close."""
+    return (date.fromisoformat(last_day) - timedelta(weeks=1)).isoformat()
 
 
 def validate_range(preset, start=None, end=None):
@@ -119,6 +125,8 @@ def price_range(desk, symbol, preset, start=None, end=None, refresh=False):
             start_day = available[-1 if preset == "1d" else -min(len(available), 5)]
     elif preset == "custom":
         start_day = start.isoformat()
+    elif preset == "1w":
+        start_day = week_start(source[-1]["date"]) if source else None
     elif preset == "ytd":
         start_day = f"{today.year}-01-01"
         previous = next(
@@ -157,6 +165,8 @@ def price_range(desk, symbol, preset, start=None, end=None, refresh=False):
         if not nominal
         else "Change between the first and last reported closes. Adjusted prices are unavailable."
     )
+    if preset == "1w":
+        note += " Daily closes over one calendar week ending at the last observation."
     if preset == "5d":
         sessions = len({b["date"] for b in bars})
         note += f" {sessions} observed trading session{'s' if sessions != 1 else ''}."

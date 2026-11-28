@@ -19,6 +19,14 @@ from stockreplay.assistant_shortcuts import local_actions
             "view the one month graph",
             [{"kind": "range", "symbol": "NVDA", "span": "1mo"}],
         ),
+        (
+            "show the one week chart for AAPL",
+            [{"kind": "range", "symbol": "AAPL", "span": "1w"}],
+        ),
+        (
+            "graph NVDA for the last 1w",
+            [{"kind": "chart", "symbols": ["NVDA"], "span": "1w"}],
+        ),
         ("show Apple YTD", [{"kind": "range", "symbol": "AAPL", "span": "ytd"}]),
         (
             "set homepage range to 2025-07-01 through 2025-08-01",
@@ -38,6 +46,17 @@ from stockreplay.assistant_shortcuts import local_actions
                 {"kind": "appearance", "mode": "dark"},
                 {"kind": "accent", "color": "ocean"},
                 {"kind": "advanced", "enabled": True},
+            ],
+        ),
+        (
+            "open the Future tab for Apple",
+            [
+                {
+                    "kind": "navigate",
+                    "page": "Research",
+                    "symbol": "AAPL",
+                    "focus": "future",
+                }
             ],
         ),
         ("expand the assistant", [{"kind": "chat_size", "size": "large"}]),
@@ -71,7 +90,9 @@ def test_direct_commands_skip_credentials_and_planner_but_never_skip_secret_chec
     with TestClient(create_app(tmp_path)) as c:
         c.patch("/api/ai", json={"provider": "openai"})
         gateway = c.app.state.terminal.openai
-        gateway.transport = httpx.MockTransport(lambda _: pytest.fail("Unexpected OpenAI request"))
+        gateway.transport = httpx.MockTransport(
+            lambda _: pytest.fail("Unexpected OpenAI request")
+        )
         body = {
             "page": "Research",
             "symbol": "NVDA",
@@ -79,7 +100,9 @@ def test_direct_commands_skip_credentials_and_planner_but_never_skip_secret_chec
         }
         result = c.post("/api/assistant", json=body)
         assert result.is_success and result.json()["local"]
-        body["messages"][0]["text"] = "Where do I find my forecast assumptions?"
+        body["messages"][0]["text"] = (
+            "How do higher interest rates affect small-cap valuations?"
+        )
         assert c.post("/api/assistant", json=body).status_code == 409
         body["messages"].append({"role": "user", "text": "Show settings"})
         body["messages"][0]["text"] = "sk-block-this-secret-before-routing"
@@ -110,7 +133,9 @@ def test_pooled_transport_keeps_credentials_and_request_ids_per_call(tmp_path):
     assert pool.is_closed
 
 
-def test_sourced_shortcut_only_bills_the_answer_and_hides_automatic_holdings(tmp_path, monkeypatch):
+def test_sourced_shortcut_only_bills_the_answer_and_hides_automatic_holdings(
+    tmp_path, monkeypatch
+):
     import json
     from tests.provider_fixture import respond
 
@@ -152,10 +177,79 @@ def test_sourced_shortcut_only_bills_the_answer_and_hides_automatic_holdings(tmp
                 ],
             },
         )
-        assert c.post("/api/assistant/research/MSFT", json={"question": question}).is_success
+        assert c.post(
+            "/api/assistant/research/MSFT", json={"question": question}
+        ).is_success
         assert [name for name, _ in calls] == ["stock_question"]
         assert "PRIVATE" not in json.dumps(calls)
         prompt["messages"][0]["text"] = "How do I change the chart style?"
         assert c.post("/api/assistant", json=prompt).is_success
         assert calls[-1][0] == "app_assistant" and calls[-1][1]["symbol"] == ""
         assert "PRIVATE" not in json.dumps(calls)
+
+
+def test_prediction_location_question_returns_a_local_link_without_navigating(tmp_path):
+    with TestClient(create_app(tmp_path)) as c:
+        sent = c.post(
+            "/api/assistant",
+            json={
+                "messages": [
+                    {
+                        "role": "user",
+                        "text": "wheres the tab where i can see future stock prediction",
+                    }
+                ],
+                "page": "Settings",
+                "symbol": "BRK-B",
+            },
+        )
+        assert sent.status_code == 200
+        answer = sent.json()
+        assert answer["actions"] == [] and answer["local"]
+        assert answer["links"] == [
+            {
+                "label": "Open Future",
+                "page": "Research",
+                "symbol": "BRK-B",
+                "focus": "future",
+            }
+        ]
+
+
+def test_forecast_generation_accepts_an_explicit_single_ticker_instruction(tmp_path):
+    assert local_actions("Open the saved 1M forecast for Apple", "MSFT") == [
+        {
+            "kind": "navigate",
+            "symbol": "AAPL",
+            "page": "Research",
+            "focus": "future_1mo",
+        }
+    ]
+    assert local_actions("Generate a 1M forecast for AAPL", "MSFT") == [
+        {"kind": "forecast", "symbol": "AAPL", "span": "1mo"}
+    ]
+    assert local_actions("Update my price forecast for Apple for one week", "MSFT") == [
+        {"kind": "forecast", "symbol": "AAPL", "span": "1w"}
+    ]
+    assert local_actions(
+        "Generate a forecast for AAPL from 2027-02-01 to 2027-02-07", "MSFT"
+    ) == [{"kind": "forecast", "symbol": "AAPL", "span": "2027-02-01/2027-02-07"}]
+    assert local_actions("Generate a 1M forecast for AAPL and MSFT", "MSFT") is None
+    with TestClient(create_app(tmp_path)) as c:
+        for text in [
+            "Can you generate a forecast for AAPL?",
+            "Where do I find my forecast assumptions?",
+            "Do you have a stock price prediction?",
+            "Generate a 1M forecast for AAPL?",
+        ]:
+            answer = c.post(
+                "/api/assistant",
+                json={
+                    "page": "Settings",
+                    "symbol": "AAPL",
+                    "messages": [{"role": "user", "text": text}],
+                },
+            )
+            assert answer.status_code == 200
+            assert answer.json()["local"] and answer.json()["actions"] == []
+            assert answer.json()["links"][0]["focus"] == "future"
